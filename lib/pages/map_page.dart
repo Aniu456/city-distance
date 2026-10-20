@@ -231,7 +231,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     }
     final request = ++_request;
     final depth = _depth;
-    final view = _view;
+    final view = _detailView;
     Future<void> visit(List<MapRegion> regions, int remaining) async {
       if (remaining == 0) {
         return;
@@ -277,8 +277,8 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
 
   /// 区县层级下，提前加载视野及其周边半个视野内各地级市的区县文件。
   ///
-  /// 只有细节聚焦所在的地级市显示区县；平移使聚焦移到相邻城市时，文件已在
-  /// 后台解码完毕，区县名称也已在空闲时排好版，不在切换那一帧集中完成。
+  /// 视野内每个地级市都显示区县；平移使新城市进入视野时，文件已在后台解码
+  /// 完毕，区县名称也已在空闲时排好版，不在进入那一帧集中完成。
   /// 预取失败不提示：真正需要显示时 [_loadVisible] 会再次加载并报告错误。
   void _prefetchDistricts(Rect view) {
     final area = view.inflate(math.max(view.width, view.height) / 2);
@@ -354,10 +354,16 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     return region != null && region.bounds.overlaps(_view);
   }
 
+  /// 决定加载和绘制哪些区域的范围：视野外扩 20 像素，避免边缘缝隙。
+  ///
+  /// [_loadVisible] 与 [_displayedRegions] 必须共用此范围；否则只落在外扩带里的
+  /// 城市只有在之前恰好被缓存时才展开，显示结果就取决于缓存状态。
+  Rect get _detailView => _view.inflate(20 / _scale);
+
   /// 当前应绘制的区域；[focus] 为本次计算统一使用的细节聚焦。
   List<MapRegion> _displayedRegions(MapFocus? focus) {
     final result = <MapRegion>[];
-    final view = _view.inflate(20 / _scale);
+    final view = _detailView;
     void visit(List<MapRegion> regions, int remaining) {
       for (final region in regions) {
         if (!region.bounds.overlaps(view)) {
@@ -379,12 +385,15 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     return result;
   }
 
-  /// 视野内的省份都可展开到地级市（非聚焦省份淡化显示）；
-  /// 更深的区县只在细节聚焦路径上展开，避免满屏区县。
+  /// 区域能否展开到下一级：只取决于缩放层级和视野，与是否已缓存、是否选中无关。
   ///
-  /// [focus] 由调用方计算一次后传入，避免逐个区域重复做视口中心命中测试。
+  /// 视野内的省份展开到地级市；进入区县层级后，视野内的每个地级市都展开到区县，
+  /// 不再只展开聚焦城市（相邻城市不留空白）。展开的层数由调用方按 [_depth]
+  /// 限制；尚未加载的文件加载完成后即补上。[focus] 内的区域也可展开，
+  /// 保留选中区域原有的下钻行为。
   bool _canExpand(MapRegion region, MapFocus? focus) =>
       region.level == 'province' ||
+      region.level == 'city' ||
       (focus?.includes(region.code, _repository.parentOf) ?? false);
 
   /// 完整显示细节的聚焦：选中城市时为选中区域，否则跟随视口中心所在的省份，

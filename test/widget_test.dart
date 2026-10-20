@@ -560,8 +560,11 @@ void main() {
           '31',
           '50',
         ].any(region.code.startsWith);
-        if (region.level == 'district' && !municipality) {
-          expect(region.code.startsWith('6101'), isTrue, reason: region.name);
+        // 市级缩放不显示任何地级市的区县；区县缩放时视野内城市全部显示。
+        if (region.level == 'district' &&
+            !municipality &&
+            !current.showDistricts) {
+          fail('市级缩放不应出现区县：${region.name}');
         }
       }
       for (final label in current.layoutLabels()) {
@@ -574,12 +577,13 @@ void main() {
     expect(focused.showDistricts, isTrue);
     final districts = focused.regions.where((r) => r.level == 'district');
     expect(districts, isNotEmpty);
-    for (final region in districts) {
-      expect(region.code.startsWith('6101'), isTrue, reason: region.name);
+    expect(districts.where((r) => r.code.startsWith('6101')), isNotEmpty);
+    for (final region in districts.where((r) => r.code.startsWith('6101'))) {
       expect(focused.highlighted, contains(region.code));
     }
-    expect(focused.regions.any((r) => r.code == '610400'), isTrue);
-    expect(focused.highlighted, isNot(contains('610400')));
+    // 邻市咸阳在区县缩放下同样显示区县，但不加选中高亮。
+    expect(focused.regions.any((r) => r.code.startsWith('6104')), isTrue);
+    expect(focused.highlighted.any((code) => code.startsWith('6104')), isFalse);
     final xian = focused.cities.firstWhere((city) => city.name == '西安');
     expect(focused.view.contains(xian.point), isTrue);
     await preview(tester, 'focus-xian-districts');
@@ -1052,6 +1056,75 @@ void main() {
     expect(current.cityBoundaries.any((r) => r.code.startsWith('43')), isTrue);
     expect(current.regions.any((r) => r.level == 'district'), isFalse);
     await preview(tester, 'jiangxi-zoom');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('区县缩放靠近吉安和抚州交界：邻市抚州的区县也绘制、有标签且可点', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    await lookAt(tester, 115.8, 27.5, 60);
+    final current = painter(tester);
+    expect(current.showDistricts, isTrue);
+    final fuzhou = current.regions
+        .where((r) => r.level == 'district' && r.code.startsWith('3610'))
+        .toList();
+    expect(fuzhou, isNotEmpty);
+    expect(
+      current.regions.any(
+        (r) => r.level == 'district' && r.code.startsWith('3608'),
+      ),
+      isTrue,
+    );
+    final labels = current.layoutLabels();
+    expect(labels.any((l) => l.code.startsWith('3610')), isTrue);
+    // 点中抚州某区县（避开城市标记）：命中该区县并把镜头移过去。
+    final scale =
+        1 /
+        (current.view.width /
+            tester.getSize(find.byType(InteractiveViewer)).width);
+    final target = fuzhou.firstWhere(
+      (r) =>
+          current.view.contains(r.label) &&
+          current.cities.every(
+            (c) => (c.point - r.label).distance > 30 / scale,
+          ) &&
+          labels.every(
+            (l) =>
+                l.code == r.code ||
+                !l.bounds.inflate(20 / scale).contains(r.label),
+          ),
+    );
+    final controller = tester
+        .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+        .transformationController!;
+    await tester.tapAt(
+      tester.getTopLeft(find.byType(InteractiveViewer)) +
+          MatrixUtils.transformPoint(controller.value, target.label),
+    );
+    await settleMap(tester);
+    expect(painter(tester).view.contains(target.bounds.center), isTrue);
+    expect(painter(tester).regions.any((r) => r.code == target.code), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('区县显示与缓存无关：已缓存与未缓存的城市渲染一致', (tester) async {
+    Set<String> codes() => {for (final r in painter(tester).regions) r.code};
+    Set<String> labelTexts() => {
+      for (final l in painter(tester).layoutLabels()) l.text,
+    };
+    await start(tester, size: const Size(393, 852));
+    // 未缓存：首次进入市级与区县缩放。
+    await lookAt(tester, 115.9, 27.6, 190);
+    final cityFresh = codes();
+    final cityLabelsFresh = labelTexts();
+    expect(painter(tester).regions.any((r) => r.level == 'district'), isFalse);
+    await lookAt(tester, 116.3, 27.9, 60);
+    final districtFresh = codes();
+    // 抚州、南昌等区县文件此时已缓存，再看一遍结果必须相同。
+    await lookAt(tester, 115.9, 27.6, 190);
+    expect(codes(), cityFresh);
+    expect(labelTexts(), cityLabelsFresh);
+    await lookAt(tester, 116.3, 27.9, 60);
+    expect(codes(), districtFresh);
     expect(tester.takeException(), isNull);
   });
 
