@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,16 +11,67 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_release.dart';
 
+/// 取消一次下载：关闭连接并删除未完成的文件。
+class UpdateCancelToken {
+  bool _cancelled = false;
+  final _listeners = <void Function()>[];
+
+  bool get isCancelled => _cancelled;
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    for (final listener in List.of(_listeners)) {
+      listener();
+    }
+    _listeners.clear();
+  }
+
+  void _onCancel(void Function() listener) {
+    if (_cancelled) {
+      listener();
+    } else {
+      _listeners.add(listener);
+    }
+  }
+}
+
+/// 下载被取消时抛出。
+class UpdateCancelledException implements Exception {
+  const UpdateCancelledException();
+}
+
+typedef ApkInstaller = Future<bool> Function(File apk);
+
 /// 通过 GitHub Releases 检查与下载安卓更新。
 class UpdateService {
-  UpdateService({http.Client? client}) : _client = client ?? http.Client();
+  UpdateService({
+    http.Client? client,
+    http.Client Function()? downloadClientFactory,
+    ApkInstaller? installer,
+    Future<Directory> Function()? downloadDirectory,
+    this.connectTimeout = const Duration(seconds: 15),
+    this.idleTimeout = const Duration(seconds: 30),
+  }) : _client = client ?? http.Client(),
+       _downloadClientFactory = downloadClientFactory ?? http.Client.new,
+       _installer = installer ?? _openInstaller,
+       _downloadDirectory = downloadDirectory ?? getTemporaryDirectory;
 
   static const latestUrl =
       'https://api.github.com/repos/Aniu456/city-distance/releases/latest';
   static const _lastCheckKey = 'update.lastCheckMs';
   static const checkInterval = Duration(days: 1);
 
+  /// 建立连接并收到响应头的最长等待。
+  final Duration connectTimeout;
+
+  /// 两个数据块之间允许的最长空闲。
+  final Duration idleTimeout;
+
   final http.Client _client;
+  final http.Client Function() _downloadClientFactory;
+  final ApkInstaller _installer;
+  final Future<Directory> Function() _downloadDirectory;
 
   static bool get isSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -50,35 +102,89 @@ class UpdateService {
   }
 
   /// 下载 APK，onProgress 取值 0..1（大小未知时为 null）。
+  ///
+  /// 超时抛出 [TimeoutException]，取消抛出 [UpdateCancelledException]；
+  /// 两种情况和其他失败一样，都会删除未完成的文件。
   Future<File> download(
     AppRelease release, {
     required void Function(double? progress) onProgress,
+    UpdateCancelToken? cancelToken,
   }) async {
-    final dir = await getTemporaryDirectory();
+    final token = cancelToken ?? UpdateCancelToken();
+    if (token.isCancelled) throw const UpdateCancelledException();
+    final dir = await _downloadDirectory();
     final file = File('${dir.path}/chengxiang-${release.version}.apk');
-    final res = await _client.send(
-      http.Request('GET', Uri.parse(release.apkUrl)),
-    );
-    if (res.statusCode != 200) {
-      throw HttpException('下载失败（${res.statusCode}）');
+    final client = _downloadClientFactory();
+    final done = Completer<void>();
+    StreamSubscription<List<int>>? sub;
+    IOSink? sink;
+
+    void fail(Object error) {
+      if (!done.isCompleted) done.completeError(error);
     }
-    final total = res.contentLength ?? release.apkSize;
-    final sink = file.openWrite();
-    var received = 0;
+
+    token._onCancel(() {
+      client.close();
+      sub?.cancel();
+      fail(const UpdateCancelledException());
+    });
+
     try {
-      await for (final chunk in res.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-        onProgress(total > 0 ? received / total : null);
+      final responseFuture = client
+          .send(http.Request('GET', Uri.parse(release.apkUrl)))
+          .timeout(connectTimeout);
+      final res = await Future.any([
+        responseFuture,
+        done.future.then<http.StreamedResponse>(
+          (_) => throw const UpdateCancelledException(),
+        ),
+      ]);
+      if (token.isCancelled) throw const UpdateCancelledException();
+      if (res.statusCode != 200) {
+        throw HttpException('下载失败（${res.statusCode}）');
       }
+      final total = res.contentLength ?? release.apkSize;
+      final out = file.openWrite();
+      sink = out;
+      var received = 0;
+      sub = res.stream
+          .timeout(idleTimeout)
+          .listen(
+            (chunk) {
+              out.add(chunk);
+              received += chunk.length;
+              onProgress(total > 0 ? received / total : null);
+            },
+            onError: (Object e) {
+              sub?.cancel();
+              fail(e);
+            },
+            onDone: () {
+              if (!done.isCompleted) done.complete();
+            },
+            cancelOnError: true,
+          );
+      await done.future;
+      await out.close();
+      sink = null;
+      if (token.isCancelled) throw const UpdateCancelledException();
+      return file;
+    } catch (_) {
+      await sub?.cancel();
+      try {
+        await sink?.close();
+      } catch (_) {}
+      if (await file.exists()) await file.delete();
+      rethrow;
     } finally {
-      await sink.close();
+      client.close();
     }
-    return file;
   }
 
   /// 打开系统安装器；安卓 8+ 首次会引导用户允许“安装未知应用”。
-  Future<bool> install(File apk) async {
+  Future<bool> install(File apk) => _installer(apk);
+
+  static Future<bool> _openInstaller(File apk) async {
     final result = await OpenFilex.open(
       apk.path,
       type: 'application/vnd.android.package-archive',
