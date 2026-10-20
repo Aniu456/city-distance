@@ -2,13 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 import 'update_prompt.dart';
-import 'update_service.dart';
 
-/// 工具栏里的“检查更新”按钮；仅安卓显示。
+/// 工具栏里的“检查更新”按钮；仅安卓显示，需置于 [UpdatePrompt] 中。
 class UpdateCheckButton extends StatefulWidget {
-  const UpdateCheckButton({super.key, this.service});
-
-  final UpdateService? service;
+  const UpdateCheckButton({super.key});
 
   @override
   State<UpdateCheckButton> createState() => _UpdateCheckButtonState();
@@ -18,33 +15,17 @@ class _UpdateCheckButtonState extends State<UpdateCheckButton> {
   bool _checking = false;
 
   Future<void> _check() async {
-    if (_checking) return;
-    setState(() => _checking = true);
-    final service = widget.service ?? UpdateService();
-    final result = await service.checkNow();
-    if (!mounted) return;
-    setState(() => _checking = false);
-    final release = result.release;
-    if (result.status == UpdateCheckStatus.available && release != null) {
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => UpdateDialog(release: release, service: service),
-      );
+    if (_checking) {
       return;
     }
-    final message = result.status == UpdateCheckStatus.upToDate
-        ? '已是最新版本'
-        : '检查失败，请稍后再试';
-    ScaffoldMessenger.maybeOf(context)
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+    setState(() => _checking = true);
+    try {
+      await UpdatePrompt.checkNow(context);
+    } finally {
+      if (mounted) {
+        setState(() => _checking = false);
+      }
+    }
   }
 
   @override

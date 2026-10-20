@@ -1,38 +1,108 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 import 'app_release.dart';
 import 'update_service.dart';
 
-/// 包住首页：启动后静默检查一次更新，有新版本才弹窗。
+/// 包住首页，统一管理启动检查、手动检查和更新弹窗。
 class UpdatePrompt extends StatefulWidget {
   const UpdatePrompt({super.key, required this.child, this.service});
 
   final Widget child;
   final UpdateService? service;
 
+  /// 手动检查并显示结果；调用方必须位于 [UpdatePrompt] 的子树中。
+  static Future<void> checkNow(BuildContext context) {
+    final state = context.findAncestorStateOfType<_UpdatePromptState>();
+    if (state == null) {
+      throw FlutterError('检查更新的入口必须位于 UpdatePrompt 中。');
+    }
+    return state._checkManually();
+  }
+
   @override
   State<UpdatePrompt> createState() => _UpdatePromptState();
 }
 
 class _UpdatePromptState extends State<UpdatePrompt> {
+  late final UpdateService _service;
+  Future<void>? _manualCheck;
+  bool _manualCheckStarted = false;
+  bool _dialogOpen = false;
+
   @override
   void initState() {
     super.initState();
+    _service = widget.service ?? UpdateService();
     if (UpdateService.isSupported) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _check());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_checkAutomatically());
+        }
+      });
     }
   }
 
-  Future<void> _check() async {
-    final service = widget.service ?? UpdateService();
-    final release = await service.check();
-    if (release == null || !mounted) return;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => UpdateDialog(release: release, service: service),
-    );
+  Future<void> _checkAutomatically() async {
+    final release = await _service.check();
+    if (release == null || !mounted || _manualCheckStarted) {
+      return;
+    }
+    await _showRelease(release);
+  }
+
+  Future<void> _checkManually() {
+    // 手动检查接管提示，较晚返回的自动请求也不能重新弹窗。
+    _manualCheckStarted = true;
+    if (_dialogOpen) {
+      return Future<void>.value();
+    }
+    return _manualCheck ??= _runManualCheck().whenComplete(() {
+      _manualCheck = null;
+    });
+  }
+
+  Future<void> _runManualCheck() async {
+    final result = await _service.checkNow();
+    if (!mounted) {
+      return;
+    }
+    final release = result.release;
+    if (result.status == UpdateCheckStatus.available && release != null) {
+      // 弹窗由首页继续管理，按钮只等待检查请求结束。
+      unawaited(_showRelease(release));
+      return;
+    }
+    final message = result.status == UpdateCheckStatus.upToDate
+        ? '已是最新版本'
+        : '检查失败，请稍后再试';
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+  }
+
+  Future<void> _showRelease(AppRelease release) async {
+    if (_dialogOpen) {
+      return;
+    }
+    _dialogOpen = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => UpdateDialog(release: release, service: _service),
+      );
+    } finally {
+      _dialogOpen = false;
+    }
   }
 
   @override

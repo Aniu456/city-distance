@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -213,10 +214,9 @@ void main() {
       final gate = Completer<UpdateCheckResult>();
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: Center(
-              child: UpdateCheckButton(service: _FakeService(gate.future)),
-            ),
+          home: UpdatePrompt(
+            service: _FakeService(gate.future),
+            child: const Scaffold(body: Center(child: UpdateCheckButton())),
           ),
         ),
       );
@@ -243,12 +243,121 @@ void main() {
       expect(find.text('检查失败，请稍后再试'), findsOneWidget);
     });
   });
+
+  group('UpdatePrompt coordination', () {
+    Future<void> start(WidgetTester tester, _PendingChecks service) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UpdatePrompt(
+            service: service,
+            child: const Scaffold(body: UpdateCheckButton()),
+          ),
+        ),
+      );
+    }
+
+    for (final automaticFirst in [false, true]) {
+      testWidgets('concurrent checks show one dialog when '
+          '${automaticFirst ? 'automatic' : 'manual'} finishes first', (
+        tester,
+      ) async {
+        final service = _PendingChecks();
+        await start(tester, service);
+        await tester.tap(find.byTooltip('检查更新'));
+        await tester.pump();
+        if (automaticFirst) {
+          service.automatic.complete(_release);
+        } else {
+          service.manual.complete(const UpdateCheckResult.available(_release));
+        }
+        await tester.pump();
+        if (automaticFirst) {
+          service.manual.complete(const UpdateCheckResult.available(_release));
+        } else {
+          service.automatic.complete(_release);
+        }
+        await tester.pumpAndSettle();
+        expect(find.byType(UpdateDialog, skipOffstage: false), findsOneWidget);
+        await tester.tap(find.text('稍后'));
+        await tester.pumpAndSettle();
+        expect(find.byType(UpdateDialog, skipOffstage: false), findsNothing);
+        expect(tester.takeException(), isNull);
+      }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+    }
+
+    testWidgets('late automatic result does not reopen a dismissed dialog', (
+      tester,
+    ) async {
+      final service = _PendingChecks();
+      await start(tester, service);
+      await tester.tap(find.byTooltip('检查更新'));
+      service.manual.complete(const UpdateCheckResult.available(_release));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('稍后'));
+      await tester.pumpAndSettle();
+      service.automatic.complete(_release);
+      await tester.pumpAndSettle();
+      expect(find.byType(UpdateDialog, skipOffstage: false), findsNothing);
+      // 旧的自动结果被忽略，但用户仍可再次主动检查。
+      await tester.tap(find.byTooltip('检查更新'));
+      await tester.pumpAndSettle();
+      expect(service.manualCalls, 2);
+      expect(find.byType(UpdateDialog, skipOffstage: false), findsOneWidget);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+    testWidgets('automatic check still prompts without a manual request', (
+      tester,
+    ) async {
+      final service = _PendingChecks();
+      await start(tester, service);
+      service.automatic.complete(_release);
+      await tester.pumpAndSettle();
+      expect(find.byType(UpdateDialog, skipOffstage: false), findsOneWidget);
+      expect(service.manualCalls, 0);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+    testWidgets('recreated manual entry shares the pending check', (
+      tester,
+    ) async {
+      final service = _PendingChecks();
+      final entry = ValueNotifier(0);
+      addTearDown(entry.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UpdatePrompt(
+            service: service,
+            child: Scaffold(
+              body: ValueListenableBuilder<int>(
+                valueListenable: entry,
+                builder: (_, value, _) =>
+                    UpdateCheckButton(key: ValueKey(value)),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byTooltip('检查更新'));
+      await tester.pump();
+      entry.value++;
+      await tester.pump();
+      await tester.tap(find.byTooltip('检查更新'));
+      await tester.pump();
+      expect(service.manualCalls, 1);
+      service.manual.complete(const UpdateCheckResult.available(_release));
+      await tester.pumpAndSettle();
+      expect(find.byType(UpdateDialog, skipOffstage: false), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
 }
 
 class _FakeService extends UpdateService {
   _FakeService(this._result);
 
   final Future<UpdateCheckResult> _result;
+
+  @override
+  Future<AppRelease?> check({bool force = false}) async => null;
 
   @override
   Future<UpdateCheckResult> checkNow() => _result;
@@ -278,5 +387,20 @@ class _PopObserver extends NavigatorObserver {
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     pops++;
+  }
+}
+
+class _PendingChecks extends UpdateService {
+  final automatic = Completer<AppRelease?>();
+  final manual = Completer<UpdateCheckResult>();
+  int manualCalls = 0;
+
+  @override
+  Future<AppRelease?> check({bool force = false}) => automatic.future;
+
+  @override
+  Future<UpdateCheckResult> checkNow() {
+    manualCalls++;
+    return manual.future;
   }
 }
