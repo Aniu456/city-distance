@@ -746,6 +746,8 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
       final previous = _origin;
       _origin = _destination;
       _destination = previous;
+      // 详情改回显示新的目的地，不再沿用交换前查看的城市。
+      _viewedCity = null;
       _setFocus(_cityFocus(_destination));
     });
     _fitTrip();

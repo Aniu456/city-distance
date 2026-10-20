@@ -285,6 +285,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('查看其他城市后交换路线：详情改为新路线，不沿用查看的城市', (tester) async {
+    await start(tester);
+    await selectCity(tester, '从哪里出发', '武汉');
+    await selectCity(tester, '想去哪里', '长沙');
+    await tapCityOnMap(tester, '南昌');
+    var details = tester.widget<CityDetails>(find.byType(CityDetails));
+    expect(details.destination.name, '南昌');
+    await tester.tap(find.byTooltip('交换出发地和目的地'));
+    await settleMap(tester);
+    details = tester.widget<CityDetails>(find.byType(CityDetails));
+    expect(details.origin?.name, '长沙');
+    expect(details.destination.name, '武汉');
+    expect(fieldText(tester, 'origin-field'), '长沙');
+    expect(fieldText(tester, 'destination-field'), '武汉');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('手机保留大地图，摘要可展开详情，横竖屏不溢出', (tester) async {
     await start(tester, size: const Size(390, 844));
     final mapRect = tester.getRect(find.byType(InteractiveViewer));
