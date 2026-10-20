@@ -1371,59 +1371,77 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('选择器在三种停靠高度下旋转到横屏都不溢出，旋转回竖屏恢复', (tester) async {
-    final lists = find.byKey(const ValueKey('city-picker-lists'));
-    final handle = find.byKey(const ValueKey('city-picker-handle'));
-    final picker = find.byKey(const ValueKey('city-picker'));
-    // 每种停靠高度：竖屏进入该状态，旋转到横屏，再旋转回竖屏。
-    final setups = <String, (double, Future<void> Function())>{
-      'minimized': (
-        0,
-        () async {
-          await tester.fling(handle, const Offset(0, 200), 1200);
-          await tester.pumpAndSettle();
-        },
-      ),
-      'normal': (220, () async {}),
-      'expanded': (
-        426,
-        () async {
-          await tester.drag(handle, const Offset(0, -200));
-          await tester.pumpAndSettle();
-        },
-      ),
-    };
-    await start(tester, size: const Size(393, 852));
-    for (final MapEntry(key: name, value: (portrait, enter))
-        in setups.entries) {
-      await tester.tap(find.text('从哪里出发'));
-      await tester.pumpAndSettle();
-      await enter();
-      expect(tester.getSize(lists).height, closeTo(portrait, 1), reason: name);
-      tester.view.physicalSize = const Size(852, 393);
-      // 第一帧就贴合新高度，不从旧高度做动画。
-      await tester.pump();
-      expect(tester.takeException(), isNull, reason: '$name 横屏首帧');
-      final screen = tester.getRect(find.byType(Scaffold));
-      expect(tester.getRect(picker).bottom, lessThanOrEqualTo(screen.bottom));
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull, reason: '$name 横屏');
-      expect(
-        tester.getTopLeft(picker).dy,
-        greaterThanOrEqualTo(
-          tester.getRect(find.byKey(const ValueKey('trip-fields'))).bottom,
+  for (final landscape in const [
+    Size(852, 393),
+    Size(667, 375),
+    Size(568, 320),
+    Size(640, 360),
+  ]) {
+    testWidgets('选择器在三种停靠高度下旋转到横屏 '
+        '${landscape.width.toInt()}×${landscape.height.toInt()} 都不溢出，旋转回竖屏恢复', (
+      tester,
+    ) async {
+      final lists = find.byKey(const ValueKey('city-picker-lists'));
+      final handle = find.byKey(const ValueKey('city-picker-handle'));
+      final picker = find.byKey(const ValueKey('city-picker'));
+      // 每种停靠高度：竖屏进入该状态，旋转到横屏，再旋转回竖屏。
+      final setups = <String, (double, Future<void> Function())>{
+        'minimized': (
+          0,
+          () async {
+            await tester.fling(handle, const Offset(0, 200), 1200);
+            await tester.pumpAndSettle();
+          },
         ),
-        reason: '$name 不遮住行程卡片',
-      );
-      expect(find.text('完成'), findsOneWidget);
-      tester.view.physicalSize = const Size(393, 852);
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull, reason: '$name 竖屏');
-      expect(tester.getSize(lists).height, closeTo(portrait, 1), reason: name);
-      await tester.tap(find.text('完成'));
-      await tester.pumpAndSettle();
-    }
-  });
+        'normal': (220, () async {}),
+        'expanded': (
+          426,
+          () async {
+            await tester.drag(handle, const Offset(0, -200));
+            await tester.pumpAndSettle();
+          },
+        ),
+      };
+      await start(tester, size: const Size(393, 852));
+      for (final MapEntry(key: name, value: (portrait, enter))
+          in setups.entries) {
+        await tester.tap(find.text('从哪里出发'));
+        await tester.pumpAndSettle();
+        await enter();
+        expect(
+          tester.getSize(lists).height,
+          closeTo(portrait, 1),
+          reason: name,
+        );
+        tester.view.physicalSize = landscape;
+        // 第一帧就贴合新高度，不从旧高度做动画。
+        await tester.pump();
+        expect(tester.takeException(), isNull, reason: '$name 横屏首帧');
+        final screen = tester.getRect(find.byType(Scaffold));
+        expect(tester.getRect(picker).bottom, lessThanOrEqualTo(screen.bottom));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '$name 横屏');
+        expect(
+          tester.getTopLeft(picker).dy,
+          greaterThanOrEqualTo(
+            tester.getRect(find.byKey(const ValueKey('trip-fields'))).bottom,
+          ),
+          reason: '$name 不遮住行程卡片',
+        );
+        expect(find.text('完成'), findsOneWidget);
+        tester.view.physicalSize = const Size(393, 852);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '$name 竖屏');
+        expect(
+          tester.getSize(lists).height,
+          closeTo(portrait, 1),
+          reason: name,
+        );
+        await tester.tap(find.text('完成'));
+        await tester.pumpAndSettle();
+      }
+    });
+  }
 
   testWidgets('默认两栏都不高亮，只有点开某栏选择器时才高亮该栏', (tester) async {
     await start(tester, size: const Size(393, 852));

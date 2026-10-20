@@ -20,6 +20,7 @@ import '../widgets/city_picker.dart';
 import '../widgets/map_painter.dart';
 import '../widgets/map_toolbar.dart';
 import '../widgets/map_viewport.dart';
+import '../widgets/picker_dock.dart';
 import '../widgets/snap_sheet.dart';
 import '../widgets/trip_header.dart';
 
@@ -69,7 +70,8 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
   /// 手机默认视角等于全国视图连续点击“放大”的次数。
   static const _mobileHomeSteps = 3;
 
-  /// 选择器打开时为上方行程卡片和地图保留的最小高度，逻辑像素。
+  /// 选择器打开时至少为上方内容保留的高度，逻辑像素；内容实际排版的
+  /// 最小高度更大时以后者为准（见 [PickerDock]）。
   static const _pickerReservedHeight = 150.0;
 
   /// 点击城市标记的命中半径，屏幕逻辑像素。
@@ -925,22 +927,15 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
+        // 城市选择器停靠在底部，不遮挡地图，选择结果即时反映到地图聚焦。
+        // 宽窄布局在外层判定：[PickerDock] 需要求内容的固有高度，
+        // 内容子树里不能再有 LayoutBuilder。
         child: LayoutBuilder(
-          builder: (context, constraints) => Column(
+          builder: (context, constraints) => PickerDock(
+            reserved: _pickerReservedHeight,
             children: [
-              Expanded(child: _content()),
-              // 城市选择器停靠在底部，不遮挡地图，选择结果即时反映到地图聚焦；
-              // 高度上限为可用高度减去顶部行程卡片和一段地图的保留高度。
-              if (_pickingOrigin case final origin?)
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: math.max(
-                      0,
-                      constraints.maxHeight - _pickerReservedHeight,
-                    ),
-                  ),
-                  child: _picker(origin: origin),
-                ),
+              _content(constraints),
+              if (_pickingOrigin case final origin?) _picker(origin: origin),
             ],
           ),
         ),
@@ -948,9 +943,12 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     );
   }
 
-  Widget _content() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
+  /// 页面主体；[constraints] 为整个安全区的约束。
+  ///
+  /// 详情面板只在选择器收起时出现，此时主体占满安全区，面板高度按安全区计算。
+  Widget _content(BoxConstraints constraints) {
+    return Builder(
+      builder: (context) {
         if (constraints.maxWidth >= 760) {
           return Row(
             children: [
@@ -959,22 +957,28 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
                 // 高度不足（如横屏手机打开选择器）时各部分各自滚动，不溢出。
                 child: Column(
                   children: [
-                    Flexible(child: SingleChildScrollView(child: _controls())),
+                    Flexible(
+                      child: NoMinHeight(
+                        child: SingleChildScrollView(child: _controls()),
+                      ),
+                    ),
                     if (_showDetails)
-                      Expanded(child: _details())
+                      Expanded(child: NoMinHeight(child: _details()))
                     else
                       const Flexible(
-                        child: SingleChildScrollView(
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 22,
-                              vertical: 20,
-                            ),
-                            child: Text(
-                              '选一座想去的城市，看看路上要多久、当地做什么、生活花多少。',
-                              style: TextStyle(
-                                color: AppColors.hintText,
-                                height: 1.6,
+                        child: NoMinHeight(
+                          child: SingleChildScrollView(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 22,
+                                vertical: 20,
+                              ),
+                              child: Text(
+                                '选一座想去的城市，看看路上要多久、当地做什么、生活花多少。',
+                                style: TextStyle(
+                                  color: AppColors.hintText,
+                                  height: 1.6,
+                                ),
                               ),
                             ),
                           ),
@@ -1007,17 +1011,18 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
                 ),
               ),
               Expanded(
+                // expand 等同 Positioned.fill，且地图区不是定位子节点，
+                // 其提示栏计入 [PickerDock] 求得的内容最小高度。
                 child: Stack(
+                  fit: StackFit.expand,
                   children: [
                     // 收起的面板占用固定高度，地图与缩放按钮始终在其上方可用；
                     // 展开时面板覆盖地图显示完整详情。
-                    Positioned.fill(
-                      child: Column(
-                        children: [
-                          Expanded(child: _mapArea(mobile: true)),
-                          if (showSheet) SizedBox(height: sheetHeight),
-                        ],
-                      ),
+                    Column(
+                      children: [
+                        Expanded(child: _mapArea(mobile: true)),
+                        if (showSheet) SizedBox(height: sheetHeight),
+                      ],
                     ),
                     if (showSheet)
                       Positioned.fill(
