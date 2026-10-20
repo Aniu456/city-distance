@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../models/map_region.dart';
@@ -17,6 +18,12 @@ class MapRepository {
   }) : _bundle = bundle ?? rootBundle;
 
   final AssetBundle _bundle;
+
+  /// 是否在后台 isolate 中解码 GeoJSON（Web 上 `compute` 仍在当前线程执行）。
+  ///
+  /// 平移跨入新区域时加载的文件不再在 UI 线程上解析；测试环境的伪时钟
+  /// 不等待真实 isolate，`test/flutter_test_config.dart` 将其关闭。
+  static bool decodeInBackground = true;
 
   /// 最多缓存的地级市（区县边界）文件数。
   final int maxDetailFiles;
@@ -121,6 +128,9 @@ class MapRepository {
       // 读取失败时资源包会缓存失败结果，也须清除，重试才会真正重新读取。
       _bundle.evict(key);
     }
-    return parseRegions(source);
+    final shapes = decodeInBackground
+        ? await compute(decodeRegions, source, debugLabel: 'decode $code')
+        : decodeRegions(source);
+    return buildRegions(shapes);
   }
 }

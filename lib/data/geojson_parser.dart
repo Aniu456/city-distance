@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import '../models/map_region.dart';
@@ -31,8 +32,25 @@ Offset _point(Object? value) {
   return project(longitude, latitude);
 }
 
+/// 一块区域解码后的纯数据：投影后的环坐标按 x, y 交替存放。
+///
+/// 不含 [Path] 等引擎对象，可以在后台 isolate 中生成后传回 UI 线程。
+typedef RegionShape = ({
+  String code,
+  String name,
+  String level,
+  bool hasChildren,
+  List<Float64List> rings,
+  Offset? label,
+});
+
 /// 在资源输入边界解析 GeoJSON，支持岛屿、多面及内环。
-List<MapRegion> parseRegions(String source) {
+List<MapRegion> parseRegions(String source) =>
+    buildRegions(decodeRegions(source));
+
+/// 解码并投影 GeoJSON，不创建路径；耗时的 JSON 解析和投影都在这里，
+/// 可通过 `compute` 放到后台 isolate 执行。
+List<RegionShape> decodeRegions(String source) {
   final collection = _object(jsonDecode(source));
   if (collection['type'] != 'FeatureCollection') {
     throw const FormatException('地图不是 FeatureCollection');
@@ -48,14 +66,20 @@ List<MapRegion> parseRegions(String source) {
           'MultiPolygon' => coordinates,
           _ => throw const FormatException('不支持的地图几何类型'),
         };
-        final path = Path()..fillType = PathFillType.evenOdd;
+        final rings = <Float64List>[];
         for (final polygon in polygons) {
           for (final ring in _list(polygon)) {
-            final points = _list(ring).map(_point).toList();
+            final points = _list(ring);
             if (points.length < 4) {
               throw const FormatException('地图边界点数量不足');
             }
-            path.addPolygon(points, true);
+            final values = Float64List(points.length * 2);
+            for (final (index, raw) in points.indexed) {
+              final point = _point(raw);
+              values[index * 2] = point.dx;
+              values[index * 2 + 1] = point.dy;
+            }
+            rings.add(values);
           }
         }
         final code = properties['adcode'];
@@ -64,14 +88,35 @@ List<MapRegion> parseRegions(String source) {
           throw const FormatException('地图缺少区域编码或名称');
         }
         final center = properties['centroid'] ?? properties['center'];
-        return MapRegion(
+        return (
           code: code.toString(),
           name: name,
           level: properties['level'] as String? ?? 'decoration',
           hasChildren: (properties['childrenNum'] as num? ?? 0) > 0,
-          path: path,
-          label: center == null ? path.getBounds().center : _point(center),
+          rings: rings,
+          label: center == null ? null : _point(center),
         );
       })
       .toList(growable: false);
 }
+
+/// 由解码结果创建路径，须在 UI 线程执行；无标注点时取边界中心。
+List<MapRegion> buildRegions(List<RegionShape> shapes) => [
+  for (final shape in shapes)
+    () {
+      final path = Path()..fillType = PathFillType.evenOdd;
+      for (final ring in shape.rings) {
+        path.addPolygon([
+          for (var i = 0; i < ring.length; i += 2) Offset(ring[i], ring[i + 1]),
+        ], true);
+      }
+      return MapRegion(
+        code: shape.code,
+        name: shape.name,
+        level: shape.level,
+        hasChildren: shape.hasChildren,
+        path: path,
+        label: shape.label ?? path.getBounds().center,
+      );
+    }(),
+];
