@@ -153,6 +153,61 @@ void main() {
     expect(installs, 0);
     expect(apkFile().existsSync(), isFalse);
   });
+
+  for (final useBack in [false, true]) {
+    testWidgets('late installer result does not pop the page after '
+        '${useBack ? 'system back' : 'later button'}', (tester) async {
+      final observer = _PopObserver();
+      final installer = _PendingInstaller();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [observer],
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (context) => Scaffold(
+                      body: TextButton(
+                        onPressed: () => showDialog<void>(
+                          context: context,
+                          builder: (_) => UpdateDialog(
+                            release: _release,
+                            service: installer,
+                          ),
+                        ),
+                        child: const Text('map page'),
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('open map'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open map'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('map page'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('更新'));
+      await tester.pump();
+      expect(installer.calls, 1);
+      if (useBack) {
+        await tester.binding.handlePopRoute();
+      } else {
+        await tester.tap(find.text('稍后'));
+      }
+      // 在退出动画结束前返回；此时 mounted 仍为 true。
+      installer.result.complete(true);
+      await tester.pumpAndSettle();
+      expect(observer.pops, 1);
+      expect(find.text('map page'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   group('UpdateCheckButton', () {
     Future<void> tapWith(WidgetTester tester, UpdateCheckResult result) async {
       final gate = Completer<UpdateCheckResult>();
@@ -197,4 +252,31 @@ class _FakeService extends UpdateService {
 
   @override
   Future<UpdateCheckResult> checkNow() => _result;
+}
+
+class _PendingInstaller extends UpdateService {
+  final result = Completer<bool>();
+  int calls = 0;
+
+  @override
+  Future<File> download(
+    AppRelease release, {
+    required void Function(double? progress) onProgress,
+    UpdateCancelToken? cancelToken,
+  }) async => File('/unused-review.apk');
+
+  @override
+  Future<bool> install(File apk) {
+    calls++;
+    return result.future;
+  }
+}
+
+class _PopObserver extends NavigatorObserver {
+  int pops = 0;
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    pops++;
+  }
 }

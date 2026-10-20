@@ -75,7 +75,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
       // 弹窗已关闭或已取消时，绝不打开安装器。
       if (!mounted || token.isCancelled) return;
       final ok = await widget.service.install(file);
-      if (!mounted) return;
+      if (!mounted || token.isCancelled) {
+        return;
+      }
       if (ok) {
         Navigator.of(context).pop();
       } else {
