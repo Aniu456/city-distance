@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -236,6 +235,15 @@ void main() {
     testWidgets('shows up-to-date message', (tester) async {
       await tapWith(tester, const UpdateCheckResult.upToDate());
       expect(find.text('已是最新版本'), findsOneWidget);
+    });
+
+    testWidgets('shows no-release message without claiming up-to-date', (
+      tester,
+    ) async {
+      await tapWith(tester, const UpdateCheckResult.noRelease());
+      expect(find.text('暂未发布可用版本'), findsOneWidget);
+      expect(find.text('已是最新版本'), findsNothing);
+      expect(find.text('检查失败，请稍后再试'), findsNothing);
     });
 
     testWidgets('shows failure message', (tester) async {

@@ -42,13 +42,16 @@ class UpdateCancelledException implements Exception {
 }
 
 /// 一次手动检查的结果。
-enum UpdateCheckStatus { available, upToDate, failed }
+enum UpdateCheckStatus { available, upToDate, noRelease, failed }
 
 class UpdateCheckResult {
   const UpdateCheckResult.available(AppRelease this.release)
     : status = UpdateCheckStatus.available;
   const UpdateCheckResult.upToDate()
     : status = UpdateCheckStatus.upToDate,
+      release = null;
+  const UpdateCheckResult.noRelease()
+    : status = UpdateCheckStatus.noRelease,
       release = null;
   const UpdateCheckResult.failed()
     : status = UpdateCheckStatus.failed,
@@ -74,8 +77,9 @@ class UpdateService {
        _installer = installer ?? _openInstaller,
        _downloadDirectory = downloadDirectory ?? getTemporaryDirectory;
 
-  static const latestUrl =
-      'https://api.github.com/repos/Aniu456/city-distance/releases/latest';
+  static const releasesUrl =
+      'https://api.github.com/repos/Aniu456/city-distance/releases';
+  static const latestUrl = '$releasesUrl/latest';
   static const _lastCheckKey = 'update.lastCheckMs';
   static const checkInterval = Duration(days: 1);
 
@@ -108,7 +112,7 @@ class UpdateService {
     return result.release;
   }
 
-  /// 立即检查（不受间隔限制），区分“有新版本 / 已是最新 / 失败”。
+  /// 立即检查（不受间隔限制），区分新版本、已是最新、尚未发布和失败。
   Future<UpdateCheckResult> checkNow() async {
     try {
       final res = await _client
@@ -117,6 +121,27 @@ class UpdateService {
             headers: const {'Accept': 'application/vnd.github+json'},
           )
           .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 404) {
+        // latest 的 404 也可能是仓库无法访问；确认列表可读且没有正式版本。
+        final listing = await _client
+            .get(
+              Uri.parse(releasesUrl),
+              headers: const {'Accept': 'application/vnd.github+json'},
+            )
+            .timeout(const Duration(seconds: 10));
+        final releases = listing.statusCode == 200
+            ? jsonDecode(listing.body)
+            : null;
+        if (releases is List<Object?> &&
+            releases.every(
+              (release) =>
+                  release is Map<String, Object?> &&
+                  (release['draft'] == true || release['prerelease'] == true),
+            )) {
+          return const UpdateCheckResult.noRelease();
+        }
+        return const UpdateCheckResult.failed();
+      }
       if (res.statusCode != 200) return const UpdateCheckResult.failed();
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt(_lastCheckKey, DateTime.now().millisecondsSinceEpoch);

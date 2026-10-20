@@ -75,9 +75,11 @@ class _UpdatePromptState extends State<UpdatePrompt> {
       unawaited(_showRelease(release));
       return;
     }
-    final message = result.status == UpdateCheckStatus.upToDate
-        ? '已是最新版本'
-        : '检查失败，请稍后再试';
+    final message = switch (result.status) {
+      UpdateCheckStatus.upToDate => '已是最新版本',
+      UpdateCheckStatus.noRelease => '暂未发布可用版本',
+      UpdateCheckStatus.available || UpdateCheckStatus.failed => '检查失败，请稍后再试',
+    };
     ScaffoldMessenger.maybeOf(context)
       ?..hideCurrentSnackBar()
       ..showSnackBar(
