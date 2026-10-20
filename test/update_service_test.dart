@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:china_map/update/app_release.dart';
+import 'package:china_map/update/update_check_button.dart';
 import 'package:china_map/update/update_prompt.dart';
 import 'package:china_map/update/update_service.dart';
 
@@ -152,4 +153,48 @@ void main() {
     expect(installs, 0);
     expect(apkFile().existsSync(), isFalse);
   });
+  group('UpdateCheckButton', () {
+    Future<void> tapWith(WidgetTester tester, UpdateCheckResult result) async {
+      final gate = Completer<UpdateCheckResult>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: UpdateCheckButton(service: _FakeService(gate.future)),
+            ),
+          ),
+        ),
+      );
+      expect(find.byTooltip('检查更新'), findsOneWidget);
+      await tester.tap(find.byTooltip('检查更新'));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      gate.complete(result);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('shows dialog when newer version exists', (tester) async {
+      await tapWith(tester, const UpdateCheckResult.available(_release));
+      expect(find.byType(UpdateDialog), findsOneWidget);
+    });
+
+    testWidgets('shows up-to-date message', (tester) async {
+      await tapWith(tester, const UpdateCheckResult.upToDate());
+      expect(find.text('已是最新版本'), findsOneWidget);
+    });
+
+    testWidgets('shows failure message', (tester) async {
+      await tapWith(tester, const UpdateCheckResult.failed());
+      expect(find.text('检查失败，请稍后再试'), findsOneWidget);
+    });
+  });
+}
+
+class _FakeService extends UpdateService {
+  _FakeService(this._result);
+
+  final Future<UpdateCheckResult> _result;
+
+  @override
+  Future<UpdateCheckResult> checkNow() => _result;
 }

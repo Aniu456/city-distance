@@ -41,6 +41,23 @@ class UpdateCancelledException implements Exception {
   const UpdateCancelledException();
 }
 
+/// 一次手动检查的结果。
+enum UpdateCheckStatus { available, upToDate, failed }
+
+class UpdateCheckResult {
+  const UpdateCheckResult.available(AppRelease this.release)
+    : status = UpdateCheckStatus.available;
+  const UpdateCheckResult.upToDate()
+    : status = UpdateCheckStatus.upToDate,
+      release = null;
+  const UpdateCheckResult.failed()
+    : status = UpdateCheckStatus.failed,
+      release = null;
+
+  final UpdateCheckStatus status;
+  final AppRelease? release;
+}
+
 typedef ApkInstaller = Future<bool> Function(File apk);
 
 /// 通过 GitHub Releases 检查与下载安卓更新。
@@ -84,20 +101,33 @@ class UpdateService {
       final now = DateTime.now().millisecondsSinceEpoch;
       final last = prefs.getInt(_lastCheckKey) ?? 0;
       if (!force && now - last < checkInterval.inMilliseconds) return null;
+    } catch (_) {
+      return null;
+    }
+    final result = await checkNow();
+    return result.release;
+  }
+
+  /// 立即检查（不受间隔限制），区分“有新版本 / 已是最新 / 失败”。
+  Future<UpdateCheckResult> checkNow() async {
+    try {
       final res = await _client
           .get(
             Uri.parse(latestUrl),
             headers: const {'Accept': 'application/vnd.github+json'},
           )
           .timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) return null;
-      await prefs.setInt(_lastCheckKey, now);
+      if (res.statusCode != 200) return const UpdateCheckResult.failed();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_lastCheckKey, DateTime.now().millisecondsSinceEpoch);
       final release = AppRelease.fromJson(jsonDecode(res.body));
-      if (release == null) return null;
+      if (release == null) return const UpdateCheckResult.failed();
       final info = await PackageInfo.fromPlatform();
-      return isNewerVersion(release.version, info.version) ? release : null;
+      return isNewerVersion(release.version, info.version)
+          ? UpdateCheckResult.available(release)
+          : const UpdateCheckResult.upToDate();
     } catch (_) {
-      return null;
+      return const UpdateCheckResult.failed();
     }
   }
 
