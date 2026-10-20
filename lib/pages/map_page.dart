@@ -245,6 +245,9 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
 
     try {
       await visit(_provinces, depth);
+      if (mounted && request == _request && depth >= 2) {
+        _prefetchDistricts(view);
+      }
       if (mounted && request == _request) {
         if (_regionError == null) {
           _mapData.value++;
@@ -257,6 +260,69 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
       if (mounted && request == _request) {
         setState(() => _regionError = '部分区域加载失败，点击重试');
       }
+    }
+  }
+
+  /// 区县层级下，提前加载视野及其周边半个视野内各地级市的区县文件。
+  ///
+  /// 只有细节聚焦所在的地级市显示区县；平移使聚焦移到相邻城市时，文件已在
+  /// 后台解码完毕，区县名称也已在空闲时排好版，不在切换那一帧集中完成。
+  /// 预取失败不提示：真正需要显示时 [_loadVisible] 会再次加载并报告错误。
+  void _prefetchDistricts(Rect view) {
+    final area = view.inflate(math.max(view.width, view.height) / 2);
+    for (final province in _provinces) {
+      if (!province.bounds.overlaps(area)) {
+        continue;
+      }
+      for (final city in _repository.cached(province.code) ?? const []) {
+        if (!city.hasChildren ||
+            !city.bounds.overlaps(area) ||
+            _repository.cached(city.code) != null) {
+          continue;
+        }
+        unawaited(
+          _repository.load(city.code).then(_prewarmDistrictLabels).catchError((
+            Object error,
+          ) {
+            debugPrint('预取区县失败 ${city.code}: $error');
+          }),
+        );
+      }
+    }
+  }
+
+  /// 每帧结束后排版的区县名称数，避免集中在一帧内完成。
+  static const _prewarmChunk = 8;
+
+  /// 等待预先排版的区县名称；每帧结束后取出一批。
+  final _prewarmQueue = <String>[];
+
+  /// 把预取到的区县名称排入队列，在之后的帧结束时按当前缩放逐批排版。
+  ///
+  /// 平移本身持续产生帧，队列随之消化；缩放变化后的排版对应新的缩放，
+  /// 下次缩放不变的平移仍可命中。
+  void _prewarmDistrictLabels(List<MapRegion> districts) {
+    final wasIdle = _prewarmQueue.isEmpty;
+    _prewarmQueue.addAll([
+      for (final district in districts)
+        if (district.name.isNotEmpty) district.name,
+    ]);
+    if (wasIdle && _prewarmQueue.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback(_prewarmNext);
+    }
+  }
+
+  void _prewarmNext(Duration _) {
+    final painter = _painter;
+    if (!mounted || painter == null) {
+      _prewarmQueue.clear();
+      return;
+    }
+    final count = math.min(_prewarmChunk, _prewarmQueue.length);
+    painter.prewarmDistrictLabels(_prewarmQueue.take(count));
+    _prewarmQueue.removeRange(0, count);
+    if (_prewarmQueue.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback(_prewarmNext);
     }
   }
 

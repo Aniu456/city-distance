@@ -18,7 +18,8 @@ typedef _LabelKey = ({
 /// 排版仍在地图坐标下进行（字号与描边宽度除以 [scale]），与不缓存时
 /// 逐像素一致；缩放变化的帧会生成新条目，旧条目按最近最少使用淘汰。
 class LabelTextCache {
-  LabelTextCache({this.capacity = 256});
+  /// 默认容量覆盖城市层级下视野内全部城市的两种样式（各含描边版本）。
+  LabelTextCache({this.capacity = 1024});
 
   /// 进程内共享的缓存，供每帧新建的地图画笔复用。
   static final shared = LabelTextCache();
@@ -30,6 +31,9 @@ class LabelTextCache {
   final _entries = <_LabelKey, TextPainter>{};
 
   int get length => _entries.length;
+
+  /// 累计未命中（新建排版）的次数，供基准和测试观察。
+  int misses = 0;
 
   /// 返回已排版的文字。[fontSize] 为屏幕逻辑像素，[scale] 为地图当前缩放；
   /// [outline] 为 true 时返回用于描边的版本。
@@ -56,6 +60,7 @@ class LabelTextCache {
       _entries[key] = hit;
       return hit;
     }
+    misses++;
     final painter = TextPainter(
       text: TextSpan(
         text: text,
