@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'pages/map_page.dart';
 import 'theme/app_colors.dart';
+import 'update/update_prompt.dart';
 
 void main() {
   runApp(const ChinaMapApp());
@@ -24,7 +25,7 @@ class ChinaMapApp extends StatelessWidget {
         scaffoldBackgroundColor: AppColors.background,
         useMaterial3: true,
       ),
-      home: const MapPage(),
+      home: const UpdatePrompt(child: MapPage()),
     );
   }
 }
