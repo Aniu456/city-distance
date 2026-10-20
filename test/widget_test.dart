@@ -254,6 +254,9 @@ void main() {
       tester.widget<CityDetails>(find.byType(CityDetails)).destination.name,
       '广州',
     );
+    // 未激活字段时点击只查看城市，不填入出发地或目的地。
+    expect(fieldText(tester, 'destination-field'), '想去哪里');
+    expect(fieldText(tester, 'origin-field'), '从哪里出发');
     final before = controller.value.clone();
     await tester.drag(finder, const Offset(80, 40));
     await settleMap(tester);
@@ -752,32 +755,52 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('地图点击填入当前字段：已有目的地时填出发地，选择器打开时填其字段', (tester) async {
+  testWidgets('未激活字段时点击地图只查看城市，出发和目的都不变', (tester) async {
     await start(tester, size: const Size(393, 852));
-    // 无选择时点击地图仍设目的地。
-    expect(fieldLabelColor(tester, 'destination-field'), AppColors.primary);
-    await selectCity(tester, '想去哪里', '长沙');
-    expect(fieldLabelColor(tester, 'origin-field'), AppColors.primary);
-    expect(fieldLabelColor(tester, 'destination-field'), AppColors.hintText);
-    expect(find.textContaining('设为出发地'), findsOneWidget);
+    expect(find.textContaining('点选地图城市查看详情'), findsOneWidget);
     await tapCityOnMap(tester, '南昌');
-    expect(fieldText(tester, 'origin-field'), '南昌');
-    expect(fieldText(tester, 'destination-field'), '长沙');
-    final labels = painter(tester).layoutLabels().map((label) => label.text);
-    expect(labels, containsAll(['起 南昌', '终 长沙']));
+    expect(fieldText(tester, 'origin-field'), '从哪里出发');
+    expect(fieldText(tester, 'destination-field'), '想去哪里');
+    // 查看的城市有高亮和详情。
     expect(painter(tester).highlighted, contains('360000'));
-    // 两地都已选且选择器收起时，点击替换目的地。
-    expect(fieldLabelColor(tester, 'destination-field'), AppColors.primary);
-    // 打开出发地选择器后，点击地图改为填出发地，三列跟随到湖北/武汉。
-    await tester.tap(find.byKey(const ValueKey('origin-field')));
-    await tester.pumpAndSettle();
-    expect(fieldLabelColor(tester, 'origin-field'), AppColors.primary);
-    await tapCityOnMap(tester, '武汉');
+    expect(
+      tester.widget<CityDetails>(find.byType(CityDetails)).destination.name,
+      '南昌',
+    );
+    // 已有出发和目的时，点击地图同样不改动两者。
+    await selectCity(tester, '想去哪里', '长沙');
+    await selectCity(tester, '从哪里出发', '武汉');
+    await tapCityOnMap(tester, '南昌');
     expect(fieldText(tester, 'origin-field'), '武汉');
     expect(fieldText(tester, 'destination-field'), '长沙');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('先点出发字段再点地图：只填出发地，三列跟随', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    await tester.tap(find.byKey(const ValueKey('origin-field')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('设为出发地'), findsOneWidget);
+    await tapCityOnMap(tester, '武汉');
+    expect(fieldText(tester, 'origin-field'), '武汉');
+    expect(fieldText(tester, 'destination-field'), '想去哪里');
     expect(find.byKey(const ValueKey('picker-city-420100')), findsOneWidget);
-    expect(find.byKey(const ValueKey('picker-city-360100')), findsNothing);
     await preview(tester, 'map-tap-origin-picker');
+    await tester.tap(find.text('完成'));
+    await settleMap(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('先点目的字段再点地图：只填目的地', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    await tester.tap(find.byKey(const ValueKey('destination-field')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('设为目的地'), findsOneWidget);
+    await tapCityOnMap(tester, '南昌');
+    expect(fieldText(tester, 'destination-field'), '南昌');
+    expect(fieldText(tester, 'origin-field'), '从哪里出发');
+    final labels = painter(tester).layoutLabels().map((label) => label.text);
+    expect(labels, contains('终 南昌'));
     await tester.tap(find.text('完成'));
     await settleMap(tester);
     expect(tester.takeException(), isNull);
@@ -843,11 +866,17 @@ void main() {
       await preview(tester, name);
     }
 
-    expect(fieldLabelColor(tester, 'destination-field'), AppColors.primary);
-    await expectSymmetric('header-destination-active');
     final before = tester.getRect(find.byKey(const ValueKey('origin-field')));
-    await selectCity(tester, '想去哪里', '武汉');
+    await expectSymmetric('header-neutral');
+    await tester.tap(find.byKey(const ValueKey('destination-field')));
+    await tester.pumpAndSettle();
+    expect(fieldLabelColor(tester, 'destination-field'), AppColors.primary);
+    expect(tester.getRect(find.byKey(const ValueKey('origin-field'))), before);
+    await expectSymmetric('header-destination-active');
+    await tester.tap(find.byKey(const ValueKey('origin-field')));
+    await tester.pumpAndSettle();
     expect(fieldLabelColor(tester, 'origin-field'), AppColors.primary);
+    expect(fieldLabelColor(tester, 'destination-field'), AppColors.hintText);
     expect(tester.getRect(find.byKey(const ValueKey('origin-field'))), before);
     await expectSymmetric('header-origin-active');
   });
@@ -1181,7 +1210,12 @@ void main() {
           MatrixUtils.transformPoint(controller.value, probe!.point),
     );
     await settleMap(tester);
-    expect(fieldText(tester, 'destination-field'), isNot(probe.city.name));
+    expect(
+      tester
+          .widgetList<CityDetails>(find.byType(CityDetails))
+          .map((details) => details.destination.name),
+      isNot(contains(probe.city.name)),
+    );
     // 已显示城市的标签文字也是点击目标（与绘制共用同一份布局）。
     final byCode = {for (final city in current.markers) city.code: city};
     final labels = current
@@ -1247,21 +1281,75 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('选择器展开后旋转屏幕，高度按新布局换算，快速下滑不会直接最小化', (tester) async {
-    await start(tester, size: const Size(393, 852));
-    await tester.tap(find.text('从哪里出发'));
-    await tester.pumpAndSettle();
+  testWidgets('选择器在三种停靠高度下旋转到横屏都不溢出，旋转回竖屏恢复', (tester) async {
     final lists = find.byKey(const ValueKey('city-picker-lists'));
     final handle = find.byKey(const ValueKey('city-picker-handle'));
-    await tester.drag(handle, const Offset(0, -200));
+    final picker = find.byKey(const ValueKey('city-picker'));
+    // 每种停靠高度：竖屏进入该状态，旋转到横屏，再旋转回竖屏。
+    final setups = <String, (double, Future<void> Function())>{
+      'minimized': (
+        0,
+        () async {
+          await tester.fling(handle, const Offset(0, 200), 1200);
+          await tester.pumpAndSettle();
+        },
+      ),
+      'normal': (220, () async {}),
+      'expanded': (
+        426,
+        () async {
+          await tester.drag(handle, const Offset(0, -200));
+          await tester.pumpAndSettle();
+        },
+      ),
+    };
+    await start(tester, size: const Size(393, 852));
+    for (final MapEntry(key: name, value: (portrait, enter))
+        in setups.entries) {
+      await tester.tap(find.text('从哪里出发'));
+      await tester.pumpAndSettle();
+      await enter();
+      expect(tester.getSize(lists).height, closeTo(portrait, 1), reason: name);
+      tester.view.physicalSize = const Size(852, 393);
+      // 第一帧就贴合新高度，不从旧高度做动画。
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: '$name 横屏首帧');
+      final screen = tester.getRect(find.byType(Scaffold));
+      expect(tester.getRect(picker).bottom, lessThanOrEqualTo(screen.bottom));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '$name 横屏');
+      expect(
+        tester.getTopLeft(picker).dy,
+        greaterThanOrEqualTo(
+          tester.getRect(find.byKey(const ValueKey('trip-fields'))).bottom,
+        ),
+        reason: '$name 不遮住行程卡片',
+      );
+      expect(find.text('完成'), findsOneWidget);
+      tester.view.physicalSize = const Size(393, 852);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '$name 竖屏');
+      expect(tester.getSize(lists).height, closeTo(portrait, 1), reason: name);
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets('默认两栏都不高亮，只有点开某栏选择器时才高亮该栏', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    expect(fieldLabelColor(tester, 'origin-field'), AppColors.hintText);
+    expect(fieldLabelColor(tester, 'destination-field'), AppColors.hintText);
+    await tester.tap(find.byKey(const ValueKey('destination-field')));
     await tester.pumpAndSettle();
-    expect(tester.getSize(lists).height, closeTo(426, 1));
-    tester.view.physicalSize = const Size(852, 1000);
+    expect(fieldLabelColor(tester, 'destination-field'), AppColors.primary);
+    expect(fieldLabelColor(tester, 'origin-field'), AppColors.hintText);
+    await tester.tap(find.text('完成'));
     await tester.pumpAndSettle();
-    expect(tester.getSize(lists).height, closeTo(500, 1));
-    await tester.fling(handle, const Offset(0, 120), 1200);
-    await tester.pumpAndSettle();
-    expect(tester.getSize(lists).height, closeTo(220, 1));
+    expect(fieldLabelColor(tester, 'destination-field'), AppColors.hintText);
+    // 选好目的地后（地图点击默认改填出发地）仍保持中性。
+    await selectCity(tester, '想去哪里', '长沙');
+    expect(fieldLabelColor(tester, 'origin-field'), AppColors.hintText);
+    expect(fieldLabelColor(tester, 'destination-field'), AppColors.hintText);
     expect(tester.takeException(), isNull);
   });
 }

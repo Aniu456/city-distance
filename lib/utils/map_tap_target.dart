@@ -1,9 +1,5 @@
-/// 地图点击城市时填入出发地（true）还是目的地（false）。
+/// 地图点击城市时要填入的字段：true 为出发地，false 为目的地。
 ///
-/// 规则：底部选择器打开时，填入正在选择的字段；选择器收起时，
-/// 已有目的地而出发地为空则填出发地，其余情况填目的地。
-bool mapTapFillsOrigin({
-  required bool? pickingOrigin,
-  required bool hasOrigin,
-  required bool hasDestination,
-}) => pickingOrigin ?? (hasDestination && !hasOrigin);
+/// 只有用户先点了出发或目的字段（其选择器打开）时才填入该字段；返回 null
+/// 时点击只查看城市（聚焦并显示详情），不改动出发地和目的地。
+bool? mapTapField({required bool? pickingOrigin}) => pickingOrigin;

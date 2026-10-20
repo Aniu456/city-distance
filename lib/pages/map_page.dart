@@ -18,7 +18,10 @@ import '../utils/map_tap_target.dart';
 import '../widgets/city_details.dart';
 import '../widgets/city_picker.dart';
 import '../widgets/map_painter.dart';
+import '../widgets/map_toolbar.dart';
+import '../widgets/map_viewport.dart';
 import '../widgets/snap_sheet.dart';
+import '../widgets/trip_header.dart';
 
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
@@ -33,6 +36,12 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
   City? _origin;
   City? _destination;
   bool _showDetails = false;
+
+  /// 未激活任何字段时在地图上点中的城市：只查看详情，不是出发地或目的地。
+  City? _viewedCity;
+
+  /// 详情面板显示的城市：正在查看的城市优先，否则为目的地。
+  City? get _detailsCity => _viewedCity ?? _destination;
 
   final _transform = TransformationController();
 
@@ -59,6 +68,9 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
 
   /// 手机默认视角等于全国视图连续点击“放大”的次数。
   static const _mobileHomeSteps = 3;
+
+  /// 选择器打开时为上方行程卡片和地图保留的最小高度，逻辑像素。
+  static const _pickerReservedHeight = 150.0;
 
   /// 点击城市标记的命中半径，屏幕逻辑像素。
   static const _markerHitRadius = 14.0;
@@ -569,17 +581,37 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     );
   }
 
-  bool get _mapTapFillsOrigin => mapTapFillsOrigin(
-    pickingOrigin: _pickingOrigin,
-    hasOrigin: _origin != null,
-    hasDestination: _destination != null,
-  );
+  bool? get _mapTapField => mapTapField(pickingOrigin: _pickingOrigin);
 
-  void _chooseFromMap(City city) => _pickCity(city, origin: _mapTapFillsOrigin);
+  /// 地图点中城市：字段激活时填入该字段，否则只查看该城市。
+  void _chooseFromMap(City city) {
+    switch (_mapTapField) {
+      case final origin?:
+        _pickCity(city, origin: origin);
+      case null:
+        _viewCity(city);
+    }
+  }
+
+  /// 只查看 [city]：聚焦、高亮并显示其详情，不改动出发地和目的地。
+  void _viewCity(City city) {
+    setState(() {
+      _viewedCity = city;
+      _setFocus(_cityFocus(city));
+      _showDetails = true;
+    });
+    final region = _repository.region(city.code);
+    _setCamera(
+      region?.bounds.center ?? city.point,
+      region == null ? _fitScale * 4 : _fitCamera(region.bounds).scale,
+      animate: true,
+    );
+  }
 
   void _chooseDestination(City city) {
     setState(() {
       _destination = city;
+      _viewedCity = null;
       _setFocus(_cityFocus(city));
       _showDetails = true;
     });
@@ -612,6 +644,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     }
     setState(() {
       _origin = city;
+      _viewedCity = null;
       _setFocus(_cityFocus(city));
     });
     if (_destination != null && _showDetails) {
@@ -684,135 +717,37 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     _setCamera(bounds.center, scale);
   }
 
-  Widget _cityField({required bool origin}) {
-    final city = origin ? _origin : _destination;
-    // 当前字段即地图点击会填入的字段，用描边和标签色标出。
-    final active = _mapTapFillsOrigin == origin;
-    return Expanded(
-      child: Semantics(
-        button: true,
-        selected: active,
-        label: origin ? '选择出发城市' : '选择目的城市',
-        child: InkWell(
-          key: ValueKey(origin ? 'origin-field' : 'destination-field'),
-          onTap: _loading ? null : () => _togglePicker(origin: origin),
-          borderRadius: BorderRadius.circular(10),
-          // 两块字段几何完全相同，激活态只改变底色和边框颜色，切换时不位移。
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            decoration: BoxDecoration(
-              color: active
-                  ? AppColors.primary.withValues(alpha: 0.07)
-                  : AppColors.mapBackground.withValues(alpha: 0.7),
-              border: Border.all(
-                color: active
-                    ? AppColors.primary
-                    : AppColors.regionBorder.withValues(alpha: 0.18),
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            // 两侧等宽且内容居中，交换按钮恰好位于卡片中线。
-            child: Column(
-              children: [
-                Text(
-                  origin ? '出发城市' : '目的城市',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: active ? AppColors.primary : AppColors.hintText,
-                    fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  city?.name ?? (origin ? '从哪里出发' : '想去哪里'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: city == null
-                        ? AppColors.placeholder
-                        : AppColors.label,
-                    fontWeight: city == null
-                        ? FontWeight.w400
-                        : FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _controls({bool compact = false}) => Padding(
-    // 四周等距：两块字段到卡片边缘的距离一致。
-    padding: const EdgeInsets.all(10),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          key: const ValueKey('trip-fields'),
-          children: [
-            _cityField(origin: true),
-            // 交换按钮居中于两块字段之间的间隙，不压住任何一侧边框。
-            const SizedBox(width: 8),
-            IconButton(
-              tooltip: '交换出发地和目的地',
-              style: IconButton.styleFrom(
-                shape: const CircleBorder(),
-                minimumSize: const Size(48, 48),
-                maximumSize: const Size(48, 48),
-                padding: EdgeInsets.zero,
-                foregroundColor: AppColors.primary,
-                disabledForegroundColor: AppColors.placeholder,
-                backgroundColor: AppColors.mapBackground,
-                disabledBackgroundColor: AppColors.mapBackground,
-              ),
-              onPressed: _origin == null || _destination == null
-                  ? null
-                  : () {
-                      setState(() {
-                        final previous = _origin;
-                        _origin = _destination;
-                        _destination = previous;
-                        _setFocus(_cityFocus(_destination));
-                      });
-                      _fitTrip();
-                    },
-              icon: const Icon(Icons.swap_horiz, size: 24),
-            ),
-            const SizedBox(width: 8),
-            _cityField(origin: false),
-          ],
-        ),
-        if (!compact) ...[
-          const SizedBox(height: 4),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _destination == null
-                  ? null
-                  : () => _chooseDestination(_destination!),
-              child: const Text('查看耗时与城市'),
-            ),
-          ),
-        ],
-      ],
-    ),
+  Widget _controls({bool compact = false}) => TripHeader(
+    origin: _origin,
+    destination: _destination,
+    // 只有用户点开该字段的选择器时才高亮；默认两栏都是中性样式。
+    // 未打开选择器时地图点击仍按 [mapTapFillsOrigin] 的规则填入。
+    activeOrigin: _pickingOrigin,
+    onFieldTap: _loading ? null : _togglePicker,
+    onSwap: _origin == null || _destination == null ? null : _swap,
+    onShowResult: switch (_destination) {
+      final destination? => () => _chooseDestination(destination),
+      null => null,
+    },
+    compact: compact,
   );
+
+  void _swap() {
+    setState(() {
+      final previous = _origin;
+      _origin = _destination;
+      _destination = previous;
+      _setFocus(_cityFocus(_destination));
+    });
+    _fitTrip();
+  }
 
   Widget _details({
     ScrollController? controller,
     VoidCallback? onToggle,
     ValueListenable<double>? expansion,
   }) {
-    final destination = _destination;
+    final destination = _detailsCity;
     if (destination == null) {
       return const SizedBox.shrink();
     }
@@ -824,6 +759,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
       rent: _cities.rents[destination.name],
       onClose: () => setState(() {
         _showDetails = false;
+        _viewedCity = null;
       }),
       onExpand: onToggle,
       controller: controller,
@@ -831,77 +767,57 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     );
   }
 
-  Widget _map() => LayoutBuilder(
-    builder: (context, constraints) {
-      final size = constraints.biggest;
-      if (size != _viewport) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || size == _viewport) {
-            return;
-          }
-          final hadViewport = !_viewport.isEmpty;
-          final oldCenter = _transform.toScene(_viewport.center(Offset.zero));
-          final oldZoom = _zoom;
-          _viewport = size;
-          _updateFitScale();
-          // 未操作过的默认视角按新视口重新计算；已操作则保持中心和相对倍数。
-          if (hadViewport && !_atHome) {
-            _setCamera(oldCenter, oldZoom * _fitScale);
-          } else {
-            _reset();
-          }
-        });
+  Widget _map() => MapViewport(
+    transform: _transform,
+    repaint: _mapRepaint,
+    painter: _mapPainter,
+    minScale: _minScale,
+    maxScale: _fitScale * 160,
+    onResize: _onViewportSize,
+    onTapUp: _select,
+    onInteractionStart: () {
+      _camera.stop();
+      _atHome = false;
+      if (_softFocus) {
+        _focus = null;
+        _softFocus = false;
       }
-      return Stack(
-        children: [
-          Positioned.fill(
-            child: ColoredBox(
-              color: AppColors.mapBackground,
-              child: GestureDetector(
-                onTapUp: (details) => _select(details.localPosition),
-                child: InteractiveViewer(
-                  transformationController: _transform,
-                  onInteractionStart: (_) {
-                    _camera.stop();
-                    _atHome = false;
-                    if (_softFocus) {
-                      _focus = null;
-                      _softFocus = false;
-                    }
-                  },
-                  constrained: false,
-                  minScale: _minScale,
-                  maxScale: _fitScale * 160,
-                  boundaryMargin: const EdgeInsets.all(1400),
-                  trackpadScrollCausesScale: true,
-                  child: ListenableBuilder(
-                    listenable: Listenable.merge([_transform, _mapData]),
-                    builder: (context, _) => _mapPaint(),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (_loading) const Center(child: CircularProgressIndicator()),
-          if (_initialError ?? _regionError case final error?)
-            Center(
-              child: FilledButton.tonalIcon(
-                onPressed: () => unawaited(
-                  _initialError != null ? _loadNational() : _loadVisible(),
-                ),
-                icon: const Icon(Icons.refresh),
-                label: Text(error),
-              ),
-            ),
-        ],
-      );
     },
+    loading: _loading,
+    error: _initialError ?? _regionError,
+    onRetry: () =>
+        unawaited(_initialError != null ? _loadNational() : _loadVisible()),
   );
+
+  /// 镜头或下级边界数据变化时只重建地图画布。
+  late final _mapRepaint = Listenable.merge([_transform, _mapData]);
+
+  void _onViewportSize(Size size) {
+    if (size == _viewport) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || size == _viewport) {
+        return;
+      }
+      final hadViewport = !_viewport.isEmpty;
+      final oldCenter = _transform.toScene(_viewport.center(Offset.zero));
+      final oldZoom = _zoom;
+      _viewport = size;
+      _updateFitScale();
+      // 未操作过的默认视角按新视口重新计算；已操作则保持中心和相对倍数。
+      if (hadViewport && !_atHome) {
+        _setCamera(oldCenter, oldZoom * _fitScale);
+      } else {
+        _reset();
+      }
+    });
+  }
 
   /// 地图画布；随镜头每帧重建，依赖镜头的数据都在这里计算。
   ///
   /// 最近一次的画笔保存在 [_painter]，点击判定与它看到的画面一致。
-  Widget _mapPaint() {
+  MapPainter _mapPainter() {
     final focus = _focus;
     final detail = _detailFocus;
     final regions = _displayedRegions(detail);
@@ -932,7 +848,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
       destination: _destination,
       parentOf: _repository.parentOf,
     );
-    return CustomPaint(size: mapSize, painter: painter);
+    return painter;
   }
 
   Widget _mapArea({bool mobile = false}) => Column(
@@ -949,33 +865,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
                   child: _map(),
                 ),
               ),
-              if (!mobile)
-                Positioned(
-                  right: 6,
-                  bottom: 8,
-                  child: Material(
-                    elevation: 3,
-                    shadowColor: const Color(0x40244e42),
-                    color: AppColors.background,
-                    borderRadius: BorderRadius.circular(10),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _mapButton(
-                          '返回全国',
-                          Icons.public,
-                          () => _reset(animate: true),
-                        ),
-                        _mapButton('放大', Icons.add, () => _zoomBy(_zoomStep)),
-                        _mapButton(
-                          '缩小',
-                          Icons.remove,
-                          () => _zoomBy(1 / _zoomStep),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              if (!mobile) Positioned(right: 6, bottom: 8, child: _toolbar()),
             ],
           ),
         ),
@@ -989,11 +879,13 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
           children: [
             Expanded(
               child: Text(
-                _origin != null && _destination != null
-                    ? '虚线为两地示意连线'
-                    : _mapTapFillsOrigin
-                    ? '点选地图城市设为出发地\n放大查看地级市与区县'
-                    : '点选地图城市设为目的地\n放大查看地级市与区县',
+                switch (_mapTapField) {
+                  true => '点选地图城市设为出发地\n放大查看地级市与区县',
+                  false => '点选地图城市设为目的地\n放大查看地级市与区县',
+                  null when _origin != null && _destination != null =>
+                    '虚线为两地示意连线',
+                  null => '点选地图城市查看详情\n先点出发或目的，再点地图填入',
+                },
                 style: const TextStyle(
                   fontSize: 12,
                   height: 1.5,
@@ -1003,28 +895,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
             ),
             if (mobile) ...[
               const SizedBox(width: 8),
-              Material(
-                elevation: 2,
-                shadowColor: const Color(0x30244e42),
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(12),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _mapButton(
-                      '返回全国',
-                      Icons.public,
-                      () => _reset(animate: true),
-                    ),
-                    _mapButton(
-                      '缩小',
-                      Icons.remove,
-                      () => _zoomBy(1 / _zoomStep),
-                    ),
-                    _mapButton('放大', Icons.add, () => _zoomBy(_zoomStep)),
-                  ],
-                ),
-              ),
+              _toolbar(horizontal: true),
             ],
           ],
         ),
@@ -1032,30 +903,35 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     ],
   );
 
-  Widget _mapButton(String tooltip, IconData icon, VoidCallback onPressed) =>
-      IconButton(
-        tooltip: tooltip,
-        onPressed: onPressed,
-        style: IconButton.styleFrom(
-          minimumSize: const Size(40, 40),
-          maximumSize: const Size(40, 40),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          padding: EdgeInsets.zero,
-          foregroundColor: AppColors.label,
-        ),
-        icon: Icon(icon, size: 18),
-      );
+  Widget _toolbar({bool horizontal = false}) => MapToolbar(
+    onHome: () => _reset(animate: true),
+    onZoomIn: () => _zoomBy(_zoomStep),
+    onZoomOut: () => _zoomBy(1 / _zoomStep),
+    horizontal: horizontal,
+  );
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(child: _content()),
-            // 城市选择器停靠在底部，不遮挡地图，选择结果即时反映到地图聚焦。
-            if (_pickingOrigin case final origin?) _picker(origin: origin),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) => Column(
+            children: [
+              Expanded(child: _content()),
+              // 城市选择器停靠在底部，不遮挡地图，选择结果即时反映到地图聚焦；
+              // 高度上限为可用高度减去顶部行程卡片和一段地图的保留高度。
+              if (_pickingOrigin case final origin?)
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: math.max(
+                      0,
+                      constraints.maxHeight - _pickerReservedHeight,
+                    ),
+                  ),
+                  child: _picker(origin: origin),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1069,22 +945,27 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
             children: [
               SizedBox(
                 width: 350,
+                // 高度不足（如横屏手机打开选择器）时各部分各自滚动，不溢出。
                 child: Column(
                   children: [
-                    _controls(),
+                    Flexible(child: SingleChildScrollView(child: _controls())),
                     if (_showDetails)
                       Expanded(child: _details())
                     else
-                      const Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 22,
-                          vertical: 20,
-                        ),
-                        child: Text(
-                          '选一座想去的城市，看看路上要多久、当地做什么、生活花多少。',
-                          style: TextStyle(
-                            color: AppColors.hintText,
-                            height: 1.6,
+                      const Flexible(
+                        child: SingleChildScrollView(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 22,
+                              vertical: 20,
+                            ),
+                            child: Text(
+                              '选一座想去的城市，看看路上要多久、当地做什么、生活花多少。',
+                              style: TextStyle(
+                                color: AppColors.hintText,
+                                height: 1.6,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -1097,7 +978,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
           );
         }
         final showSheet =
-            _showDetails && _pickingOrigin == null && _destination != null;
+            _showDetails && _pickingOrigin == null && _detailsCity != null;
         final sheetHeight = math.min(236.0, constraints.maxHeight * 0.42);
         return ColoredBox(
           color: AppColors.mapBackground,

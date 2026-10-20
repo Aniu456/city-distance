@@ -61,11 +61,12 @@ class _CityPickerState extends State<CityPicker> {
 
   double _heightOf(_PickerSnap snap) => switch (snap) {
     _PickerSnap.minimized => 0,
-    _PickerSnap.normal => _collapsedHeight,
+    _PickerSnap.normal => _normalHeight,
     _PickerSnap.expanded => _expandedHeight,
   };
 
-  double get _listHeight => _dragHeight ?? _heightOf(_snap);
+  double get _listHeight =>
+      math.min(_dragHeight ?? _heightOf(_snap), _maxListHeight);
   final _provinceScroll = ScrollController();
   final _cityScroll = ScrollController();
   String? _provinceCode;
@@ -202,8 +203,22 @@ class _CityPickerState extends State<CityPicker> {
     widget.onCounty(city, county);
   }
 
-  double get _expandedHeight =>
-      math.max(_collapsedHeight, MediaQuery.sizeOf(context).height * 0.5);
+  /// 标题栏（把手与标题行）的高度，逻辑像素；列表高度上限从可用高度中扣除它。
+  static const _chromeHeight = 60.0;
+
+  /// 列表最多可占的高度，由父级实际可用高度换算，每次构建更新。
+  double _maxListHeight = double.infinity;
+
+  /// 上次构建的 [_maxListHeight]；变化时（旋转、改变窗口）立即贴合新高度，
+  /// 不从旧高度做动画。
+  double? _previousMax;
+
+  double get _normalHeight => math.min(_collapsedHeight, _maxListHeight);
+
+  double get _expandedHeight => math.min(
+    math.max(_collapsedHeight, MediaQuery.sizeOf(context).height * 0.5),
+    _maxListHeight,
+  );
 
   void _onDragUpdate(DragUpdateDetails details) {
     setState(() {
@@ -249,7 +264,16 @@ class _CityPickerState extends State<CityPicker> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      _maxListHeight = math.max(0, constraints.maxHeight - _chromeHeight);
+      final resized = _previousMax != null && _previousMax != _maxListHeight;
+      _previousMax = _maxListHeight;
+      return _panel(animate: !_dragging && !resized);
+    },
+  );
+
+  Widget _panel({required bool animate}) {
     final cities = _provinceCities;
     final city = _city;
     return Material(
@@ -301,22 +325,25 @@ class _CityPickerState extends State<CityPicker> {
               ],
             ),
           ),
-          AnimatedContainer(
-            key: const ValueKey('city-picker-lists'),
-            duration: _dragging
-                ? Duration.zero
-                : const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            height: _listHeight,
-            clipBehavior: Clip.hardEdge,
-            decoration: const BoxDecoration(),
-            // 收小到仅标题栏时列表按最小高度布局后裁剪，不触发溢出。
-            child: LayoutBuilder(
-              builder: (context, constraints) => OverflowBox(
-                alignment: Alignment.topCenter,
-                minHeight: math.max(constraints.maxHeight, 120),
-                maxHeight: math.max(constraints.maxHeight, 120),
-                child: _lists(cities, city),
+          // 可用高度不足时 Flexible 再收小列表区，任何高度下都不溢出。
+          Flexible(
+            child: AnimatedContainer(
+              key: const ValueKey('city-picker-lists'),
+              duration: animate
+                  ? const Duration(milliseconds: 220)
+                  : Duration.zero,
+              curve: Curves.easeOutCubic,
+              height: _listHeight,
+              clipBehavior: Clip.hardEdge,
+              decoration: const BoxDecoration(),
+              // 收小到仅标题栏时列表按最小高度布局后裁剪，不触发溢出。
+              child: LayoutBuilder(
+                builder: (context, constraints) => OverflowBox(
+                  alignment: Alignment.topCenter,
+                  minHeight: math.max(constraints.maxHeight, 120),
+                  maxHeight: math.max(constraints.maxHeight, 120),
+                  child: _lists(cities, city),
+                ),
               ),
             ),
           ),
