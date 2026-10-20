@@ -33,7 +33,8 @@ class CityPicker extends StatefulWidget {
   final City? initial;
 
   /// 读取城市下一级区县；没有下级时返回空列表。
-  final Future<List<MapRegion>> Function(String cityCode) loadCounties;
+  /// 加载城市的下级区县；不设区县的城市返回空列表，失败时抛出异常。
+  final Future<List<MapRegion>> Function(City city) loadCounties;
   final ValueChanged<MapRegion> onProvince;
   final ValueChanged<City> onCity;
   final void Function(City city, MapRegion county) onCounty;
@@ -46,11 +47,25 @@ class CityPicker extends StatefulWidget {
 class _CityPickerState extends State<CityPicker> {
   static const _itemExtent = 44.0;
   static const _collapsedHeight = 220.0;
-  double _listHeight = _collapsedHeight;
 
-  /// 最近一次吸附的停靠高度，快速滑动以它为起点。
-  double _settledHeight = _collapsedHeight;
-  bool _dragging = false;
+  /// 超过此速度（逻辑像素/秒）的松手视为快速滑动。
+  static const _flingVelocity = 300.0;
+
+  /// 当前停靠点；像素高度每次构建时按布局换算，旋转或改变窗口后仍然有效。
+  _PickerSnap _snap = _PickerSnap.normal;
+
+  /// 拖动中的列表高度；不在拖动时为 null，高度取自 [_snap]。
+  double? _dragHeight;
+
+  bool get _dragging => _dragHeight != null;
+
+  double _heightOf(_PickerSnap snap) => switch (snap) {
+    _PickerSnap.minimized => 0,
+    _PickerSnap.normal => _collapsedHeight,
+    _PickerSnap.expanded => _expandedHeight,
+  };
+
+  double get _listHeight => _dragHeight ?? _heightOf(_snap);
   final _provinceScroll = ScrollController();
   final _cityScroll = ScrollController();
   String? _provinceCode;
@@ -138,7 +153,7 @@ class _CityPickerState extends State<CityPicker> {
       setState(() {});
     }
     try {
-      final counties = await widget.loadCounties(city.code);
+      final counties = await widget.loadCounties(city);
       if (mounted && _city?.code == city.code) {
         setState(() {
           _counties = counties
@@ -192,8 +207,7 @@ class _CityPickerState extends State<CityPicker> {
 
   void _onDragUpdate(DragUpdateDetails details) {
     setState(() {
-      _dragging = true;
-      _listHeight = (_listHeight - details.delta.dy).clamp(
+      _dragHeight = (_listHeight - details.delta.dy).clamp(
         0.0,
         _expandedHeight,
       );
@@ -204,30 +218,33 @@ class _CityPickerState extends State<CityPicker> {
   /// 关闭只通过“完成”。
   void _onDragEnd(DragEndDetails details) {
     final velocity = details.primaryVelocity ?? 0;
-    final stops = [0.0, _collapsedHeight, _expandedHeight];
+    const stops = _PickerSnap.values;
+    final height = _listHeight;
     var target = stops.reduce(
-      (a, b) => (a - _listHeight).abs() <= (b - _listHeight).abs() ? a : b,
+      (a, b) => (_heightOf(a) - height).abs() <= (_heightOf(b) - height).abs()
+          ? a
+          : b,
     );
-    if (velocity.abs() > 300) {
-      // 快速滑动按方向移到相邻停靠点。
-      final index = stops.indexOf(_settledHeight);
-      final next = (index + (velocity < 0 ? 1 : -1)).clamp(0, stops.length - 1);
+    if (velocity.abs() > _flingVelocity) {
+      // 快速滑动按方向从上次停靠点移到相邻停靠点。
+      final next = (_snap.index + (velocity < 0 ? 1 : -1)).clamp(
+        0,
+        stops.length - 1,
+      );
       target = stops[next];
     }
     setState(() {
-      _dragging = false;
-      _listHeight = target;
-      _settledHeight = target;
+      _dragHeight = null;
+      _snap = target;
     });
   }
 
   /// 点击把手：最小化时恢复常规高度，否则在常规和展开之间切换。
   void _toggleHeight() {
     setState(() {
-      _listHeight = _settledHeight == _collapsedHeight
-          ? _expandedHeight
-          : _collapsedHeight;
-      _settledHeight = _listHeight;
+      _snap = _snap == _PickerSnap.normal
+          ? _PickerSnap.expanded
+          : _PickerSnap.normal;
     });
   }
 
@@ -437,4 +454,16 @@ class _CityPickerState extends State<CityPicker> {
       ),
     ),
   );
+}
+
+/// 选择器列表的停靠点，从低到高排列。
+enum _PickerSnap {
+  /// 只剩把手和标题栏。
+  minimized,
+
+  /// 默认高度。
+  normal,
+
+  /// 约占屏幕一半。
+  expanded,
 }

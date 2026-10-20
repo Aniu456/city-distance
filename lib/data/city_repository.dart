@@ -13,11 +13,21 @@ class CityRepository {
   Map<String, RentReference> rents = {};
 
   Future<void> load() async {
-    final strings = await Future.wait([
-      _bundle.loadString('assets/cities/catalog.json'),
-      _bundle.loadString('assets/cities/profiles.json'),
-      _bundle.loadString('assets/cities/rents.json'),
-    ]);
+    const keys = [
+      'assets/cities/catalog.json',
+      'assets/cities/profiles.json',
+      'assets/cities/rents.json',
+    ];
+    final List<String> strings;
+    try {
+      strings = await Future.wait([
+        for (final key in keys) _bundle.loadString(key),
+      ]);
+    } catch (_) {
+      // 资源包会缓存失败的读取，清除后重试才会真正重新读取。
+      keys.forEach(_bundle.evict);
+      rethrow;
+    }
     final loadedCities = readList(jsonDecode(strings[0]))
         .map((value) => City.fromJson(readObject(value)))
         .toList(growable: false);

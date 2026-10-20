@@ -6,6 +6,7 @@ import '../models/city.dart';
 import '../models/map_region.dart';
 import '../theme/app_colors.dart';
 import '../utils/map_detail_level.dart';
+import 'label_text_cache.dart';
 
 /// 已避让的标签，坐标与地图画布一致。
 class MapLabel {
@@ -52,7 +53,9 @@ class MapPainter extends CustomPainter {
     this.origin,
     this.destination,
     this.fontFamily,
-  });
+    this.parentOf,
+    LabelTextCache? textCache,
+  }) : textCache = textCache ?? LabelTextCache.shared;
 
   final List<MapRegion> regions;
   final List<MapRegion> provinces;
@@ -73,6 +76,31 @@ class MapPainter extends CustomPainter {
   final City? destination;
   final String? fontFamily;
 
+  /// 已加载区域的上级编码，用于判断市级边界所属省份。
+  final String? Function(String code)? parentOf;
+
+  /// 标签文字排版缓存；默认使用进程内共享缓存。
+  final LabelTextCache textCache;
+
+  /// 标签与锚点的屏幕间距，逻辑像素。
+  static const _labelGap = 8.0;
+
+  /// 地级市及以下标签之间的屏幕留白，逻辑像素。
+  static const _detailLabelPadding = 3.0;
+
+  /// 省会和起终点标签之间的屏幕留白，逻辑像素。
+  static const _primaryLabelPadding = 2.0;
+
+  /// 标签距视口边缘的最小屏幕距离，逻辑像素。
+  static const _viewInset = 6.0;
+
+  /// 每个淡化标签或区县标签平均占用的屏幕面积，平方逻辑像素。
+  static const _cityLabelArea = 9000.0;
+  static const _districtLabelArea = 10000.0;
+
+  /// 本画笔的标签布局；画笔每帧新建且输入不变，因此只计算一次。
+  List<MapLabel>? _labels;
+
   double get _visibleSpan => math.max(view.width, view.height);
 
   double get cityOpacity =>
@@ -86,11 +114,17 @@ class MapPainter extends CustomPainter {
   bool _isDetailed(City city) =>
       detailProvinces?.contains(city.provinceCode) ?? true;
 
-  /// 市级区域是否属于完整显示的省份；省级编码为市级编码前两位加四个 0。
-  bool isDetailedRegion(String code) =>
-      detailProvinces?.contains('${code.substring(0, 2)}0000') ?? true;
+  /// 市级区域是否属于完整显示的省份；所属省份由 [parentOf] 查得，
+  /// 台湾等编码不遵循“前两位加 0000”规则的区域也能正确判断。
+  bool isDetailedRegion(String code) {
+    final provinces = detailProvinces;
+    if (provinces == null) {
+      return true;
+    }
+    return provinces.contains(parentOf?.call(code) ?? code);
+  }
 
-  List<City> get _visibleCities => cities
+  late final List<City> _visibleCities = cities
       .where(
         (city) =>
             view.contains(city.point) &&
@@ -101,34 +135,68 @@ class MapPainter extends CustomPainter {
   Color _cityColor(City city) =>
       city.code == origin?.code ? const Color(0xff9b5433) : AppColors.primary;
 
+  /// 地图坐标下排版的标签文字，取自 [textCache]，不得由调用方释放。
   TextPainter _text(
     String value,
     double fontSize,
     int priority,
     Color color, {
     bool outline = false,
-  }) => TextPainter(
-    text: TextSpan(
-      text: value,
-      style: TextStyle(
-        fontFamily: fontFamily,
-        fontSize: fontSize / scale,
-        fontWeight: priority <= 1 ? FontWeight.w600 : FontWeight.w400,
-        color: outline ? null : color,
-        foreground: outline
-            ? (Paint()
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = 3 / scale
-                ..strokeJoin = StrokeJoin.round
-                ..color = AppColors.background.withValues(alpha: 0.85))
-            : null,
-      ),
-    ),
-    textDirection: TextDirection.ltr,
-  )..layout();
+  }) => textCache.get(
+    text: value,
+    fontSize: fontSize,
+    scale: scale,
+    bold: priority <= 1,
+    color: color,
+    fontFamily: fontFamily,
+    outline: outline,
+  );
+
+  /// 实际绘制标记点的城市：省会、起终点和放下了标签的城市，起终点排在最后
+  /// 以绘制在最上层。绘制与点击判定共用此结果，未显示的城市不能被点中。
+  late final List<City> markers = () {
+    final labeled = layoutLabels().map((label) => label.code).toSet();
+    return _visibleCities
+        .where(
+          (city) =>
+              city.isCapital ||
+              _isSelected(city) ||
+              labeled.contains(city.code),
+        )
+        .toList()
+      ..sort(
+        (a, b) => (_isSelected(a) ? 1 : 0).compareTo(_isSelected(b) ? 1 : 0),
+      );
+  }();
+
+  /// 地图坐标 [point] 处可点中的城市：先看已显示的标签文字，再找 [radius]
+  /// （地图坐标）内最近的已显示标记点；都没有时返回 null。
+  City? cityAt(Offset point, {required double radius}) {
+    final byCode = {for (final city in markers) city.code: city};
+    for (final label in layoutLabels().reversed) {
+      final city = byCode[label.code];
+      if (city != null && label.bounds.contains(point)) {
+        return city;
+      }
+    }
+    City? nearest;
+    var distance = radius;
+    for (final city in markers) {
+      final candidate = (city.point - point).distance;
+      if (candidate < distance) {
+        nearest = city;
+        distance = candidate;
+      }
+    }
+    return nearest;
+  }
 
   /// 先放置起终点，低优先级文字无法占用它们的位置。
-  List<MapLabel> layoutLabels() {
+  ///
+  /// 结果按画笔缓存：同一画笔多次调用返回同一列表。
+  List<MapLabel> layoutLabels() => _labels ??= _layoutLabels();
+
+  List<MapLabel> _layoutLabels() {
     final candidates =
         <
           ({
@@ -201,13 +269,13 @@ class MapPainter extends CustomPainter {
       }
       return order == 0 ? a.code.compareTo(b.code) : order;
     });
-    final safeView = view.deflate(6 / scale);
+    final safeView = view.deflate(_viewInset / scale);
     final labels = <MapLabel>[];
     // 只有淡化的邻省城市和区县受屏幕面积预算约束；聚焦省份的城市全部参与，
     // 仅在屏幕上真正重叠时才被舍弃。
     final labelBudget =
         ((view.width * scale * view.height * scale) /
-                (showDistricts ? 10000 : 9000))
+                (showDistricts ? _districtLabelArea : _cityLabelArea))
             .floor()
             .clamp(6, 80);
     final selectedMarkers = visible
@@ -238,7 +306,7 @@ class MapPainter extends CustomPainter {
         candidate.priority,
         candidate.color,
       );
-      final gap = 8 / scale;
+      final gap = _labelGap / scale;
       final anchor = candidate.anchor;
       final positions = <Offset>[
         Offset(anchor.dx + gap, anchor.dy - text.height / 2),
@@ -273,7 +341,9 @@ class MapPainter extends CustomPainter {
         }
         final bounds = position & text.size;
         // 屏幕空间内的固定留白，与缩放层级无关。
-        final padding = candidate.priority >= 2 ? 3.0 : 2.0;
+        final padding = candidate.priority >= 2
+            ? _detailLabelPadding
+            : _primaryLabelPadding;
         final padded = bounds.inflate(padding / scale);
         if (!safeView.contains(padded.topLeft) ||
             !safeView.contains(padded.bottomRight) ||
@@ -302,7 +372,6 @@ class MapPainter extends CustomPainter {
         );
         break;
       }
-      text.dispose();
     }
     return labels;
   }
@@ -370,21 +439,7 @@ class MapPainter extends CustomPainter {
     }
     _drawConnection(canvas);
     final labels = layoutLabels();
-    final labeledCodes = labels.map((label) => label.code).toSet();
-    final visible =
-        _visibleCities
-            .where(
-              (city) =>
-                  city.isCapital ||
-                  _isSelected(city) ||
-                  labeledCodes.contains(city.code),
-            )
-            .toList()
-          ..sort(
-            (a, b) =>
-                (_isSelected(a) ? 1 : 0).compareTo(_isSelected(b) ? 1 : 0),
-          );
-    for (final city in visible) {
+    for (final city in markers) {
       final radius =
           (_isSelected(city)
               ? 5
@@ -441,8 +496,6 @@ class MapPainter extends CustomPainter {
       );
       outline.paint(canvas, label.bounds.topLeft);
       text.paint(canvas, label.bounds.topLeft);
-      outline.dispose();
-      text.dispose();
       if (alpha < 1) {
         canvas.restore();
       }

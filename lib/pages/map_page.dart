@@ -28,13 +28,16 @@ class MapPage extends StatefulWidget {
 }
 
 class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
-  final _repository = MapRepository();
+  late final _repository = MapRepository(isRetained: _isMapDataInUse);
   final _cities = CityRepository();
   City? _origin;
   City? _destination;
   bool _showDetails = false;
 
   final _transform = TransformationController();
+
+  /// 下级边界数据加载完成时递增，只通知地图层重绘，不重建整页。
+  final _mapData = ValueNotifier<int>(0);
   List<MapRegion> _provinces = [];
   Timer? _debounce;
 
@@ -56,8 +59,19 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
 
   /// 手机默认视角等于全国视图连续点击“放大”的次数。
   static const _mobileHomeSteps = 3;
+
+  /// 点击城市标记的命中半径，屏幕逻辑像素。
+  static const _markerHitRadius = 14.0;
+
+  /// 最近一帧绘制地图的画笔，点击判定复用它的标签和标记结果。
+  MapPainter? _painter;
   bool _loading = true;
-  String? _error;
+
+  /// 全国地图或城市资料加载失败；重试会重新加载全国数据。
+  String? _initialError;
+
+  /// 视野内下级边界加载失败；只由下级加载自身设置和清除。
+  String? _regionError;
   MapFocus? _focus;
 
   /// [_focus] 来自点击省份/区域或选择器的“省”列，而非选中城市：
@@ -131,13 +145,14 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     _camera.dispose();
     _transform.removeListener(_onTransform);
     _transform.dispose();
+    _mapData.dispose();
     super.dispose();
   }
 
   Future<void> _loadNational() async {
     setState(() {
       _loading = true;
-      _error = null;
+      _initialError = null;
     });
     try {
       final provinces = await _repository.load('100000');
@@ -158,7 +173,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = '地图或城市资料加载失败，请重试';
+          _initialError = '地图或城市资料加载失败，请重试';
         });
       }
     }
@@ -171,13 +186,18 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     // 以可见范围决定细节，而非相对全国视图的倍数。
     // 进入与退出阈值不同；拖动不会改变层级，轻微缩放不会反复跳层。
     if (!_viewport.isEmpty) {
-      _depth = mapDetailDepth(
+      final depth = mapDetailDepth(
         previous: _depth,
         visibleSpan: math.max(_viewport.width, _viewport.height) / _scale,
       );
+      // 平移和缩放的每一帧只重绘地图层（见 [_map] 中的 ListenableBuilder）；
+      // 层级变化会影响页面其余部分（点击判定等），才重建整页。
+      if (depth != _depth) {
+        setState(() => _depth = depth);
+      }
     }
-    _request++;
-    setState(() {});
+    // 不在此递增 [_request]：每帧递增会让进行中的逐级加载在下一层前被丢弃，
+    // 新的 [_loadVisible] 调用自会取代旧请求。
     _debounce?.cancel();
     if (!_sinceLoad.isRunning ||
         _sinceLoad.elapsed > const Duration(milliseconds: 250)) {
@@ -193,6 +213,10 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
   }
 
   Future<void> _loadVisible() async {
+    // 全国数据就绪前没有可展开的省份，也不能覆盖全国加载的错误状态。
+    if (_provinces.isEmpty) {
+      return;
+    }
     final request = ++_request;
     final depth = _depth;
     final view = _view;
@@ -200,10 +224,15 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
       if (remaining == 0) {
         return;
       }
+      // 每层取一次聚焦：上一层加载完成后才能知道视口中心落在哪个地级市。
+      final focus = _detailFocus;
       await Future.wait(
         regions
             .where(
-              (r) => r.hasChildren && r.bounds.overlaps(view) && _canExpand(r),
+              (r) =>
+                  r.hasChildren &&
+                  r.bounds.overlaps(view) &&
+                  _canExpand(r, focus),
             )
             .map((r) async {
               final children = await _repository.load(r.code);
@@ -217,17 +246,38 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     try {
       await visit(_provinces, depth);
       if (mounted && request == _request) {
-        setState(() => _error = null);
+        if (_regionError == null) {
+          _mapData.value++;
+        } else {
+          setState(() => _regionError = null);
+        }
       }
     } catch (error, stack) {
       debugPrint('加载下级地图失败: $error\n$stack');
       if (mounted && request == _request) {
-        setState(() => _error = '部分区域加载失败，点击重试');
+        setState(() => _regionError = '部分区域加载失败，点击重试');
       }
     }
   }
 
-  List<MapRegion> _displayedRegions() {
+  /// 已缓存的区县边界文件 [code] 是否仍被视野、聚焦或起终点使用，
+  /// 使用中的文件不会被仓库淘汰。
+  bool _isMapDataInUse(String code) {
+    for (final path in [
+      ?_focus?.path,
+      ?_cityFocus(_origin)?.path,
+      ?_cityFocus(_destination)?.path,
+    ]) {
+      if (path.contains(code)) {
+        return true;
+      }
+    }
+    final region = _repository.region(code);
+    return region != null && region.bounds.overlaps(_view);
+  }
+
+  /// 当前应绘制的区域；[focus] 为本次计算统一使用的细节聚焦。
+  List<MapRegion> _displayedRegions(MapFocus? focus) {
     final result = <MapRegion>[];
     final view = _view.inflate(20 / _scale);
     void visit(List<MapRegion> regions, int remaining) {
@@ -239,7 +289,7 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
         if (remaining > 0 &&
             children != null &&
             region.hasChildren &&
-            _canExpand(region)) {
+            _canExpand(region, focus)) {
           visit(children, remaining - 1);
         } else {
           result.add(region);
@@ -253,9 +303,11 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
 
   /// 视野内的省份都可展开到地级市（非聚焦省份淡化显示）；
   /// 更深的区县只在细节聚焦路径上展开，避免满屏区县。
-  bool _canExpand(MapRegion region) =>
+  ///
+  /// [focus] 由调用方计算一次后传入，避免逐个区域重复做视口中心命中测试。
+  bool _canExpand(MapRegion region, MapFocus? focus) =>
       region.level == 'province' ||
-      (_detailFocus?.includes(region.code, _repository.parentOf) ?? false);
+      (focus?.includes(region.code, _repository.parentOf) ?? false);
 
   /// 完整显示细节的聚焦：选中城市时为选中区域，否则跟随视口中心所在的省份，
   /// 放大到区县层级时再细化到中心所在的地级市。
@@ -423,27 +475,13 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
 
   void _select(Offset position) {
     final point = _transform.toScene(position);
-    final markers = _cities.cities.where(
-      (city) =>
-          city.isCapital ||
-          _depth >= 1 ||
-          city.code == _origin?.code ||
-          city.code == _destination?.code,
-    );
-    City? nearest;
-    var distance = 14 / _scale;
-    for (final city in markers) {
-      final candidate = (city.point - point).distance;
-      if (candidate < distance) {
-        nearest = city;
-        distance = candidate;
-      }
-    }
+    // 与绘制共用同一份标签和标记结果：只能点中屏幕上可见的城市。
+    final nearest = _painter?.cityAt(point, radius: _markerHitRadius / _scale);
     if (nearest != null) {
       _chooseFromMap(nearest);
       return;
     }
-    final region = regionAt(_displayedRegions(), point);
+    final region = regionAt(_displayedRegions(_detailFocus), point);
     if (region == null) {
       return;
     }
@@ -522,12 +560,19 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
     }
   }
 
-  Future<List<MapRegion>> _counties(String code) async {
-    final region = _repository.region(code);
-    if (region != null && !region.hasChildren) {
+  /// [city] 的下级区县。先加载所在省份以取得 `hasChildren`，
+  /// 东莞、中山等不设区县的城市返回空列表，不请求不存在的文件。
+  Future<List<MapRegion>> _counties(City city) async {
+    if (city.code == city.provinceCode) {
+      // 直辖市等省级城市：省级文件本身就是区县列表。
+      return _repository.load(city.code);
+    }
+    await _repository.load(city.provinceCode);
+    final region = _repository.region(city.code);
+    if (region == null || !region.hasChildren) {
       return const [];
     }
-    return _repository.load(code);
+    return _repository.load(city.code);
   }
 
   Widget _picker({required bool origin}) {
@@ -723,9 +768,6 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
   Widget _map() => LayoutBuilder(
     builder: (context, constraints) {
       final size = constraints.biggest;
-      final focus = _focus;
-      final detail = _detailFocus;
-      final regions = _displayedRegions();
       if (size != _viewport) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || size == _viewport) {
@@ -766,54 +808,20 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
                   maxScale: _fitScale * 160,
                   boundaryMargin: const EdgeInsets.all(1400),
                   trackpadScrollCausesScale: true,
-                  child: CustomPaint(
-                    size: mapSize,
-                    painter: MapPainter(
-                      regions: regions,
-                      provinces: _provinces,
-                      cityBoundaries: [
-                        for (final province in _provinces)
-                          if (province.bounds.overlaps(_view))
-                            ...?_repository.cached(province.code),
-                      ],
-                      scale: _scale,
-                      view: _view,
-                      // 绿色填充只表示真实选择；未选城市时不高亮任何区域。
-                      highlighted: {
-                        if (focus != null && !_softFocus) ...[
-                          ...focus.path,
-                          for (final region in regions)
-                            if (focus.includes(
-                              region.code,
-                              _repository.parentOf,
-                            ))
-                              region.code,
-                        ],
-                      },
-                      detailProvinces: detail == null
-                          ? null
-                          : {detail.provinceCode},
-                      cities: _cities.cities,
-                      showCities: _depth >= 1,
-                      showDistricts: _depth >= 2,
-                      fontFamily: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.fontFamily,
-                      origin: _origin,
-                      destination: _destination,
-                    ),
+                  child: ListenableBuilder(
+                    listenable: Listenable.merge([_transform, _mapData]),
+                    builder: (context, _) => _mapPaint(),
                   ),
                 ),
               ),
             ),
           ),
           if (_loading) const Center(child: CircularProgressIndicator()),
-          if (_error case final error?)
+          if (_initialError ?? _regionError case final error?)
             Center(
               child: FilledButton.tonalIcon(
                 onPressed: () => unawaited(
-                  _provinces.isEmpty ? _loadNational() : _loadVisible(),
+                  _initialError != null ? _loadNational() : _loadVisible(),
                 ),
                 icon: const Icon(Icons.refresh),
                 label: Text(error),
@@ -823,6 +831,43 @@ class _MapPageState extends State<MapPage> with SingleTickerProviderStateMixin {
       );
     },
   );
+
+  /// 地图画布；随镜头每帧重建，依赖镜头的数据都在这里计算。
+  ///
+  /// 最近一次的画笔保存在 [_painter]，点击判定与它看到的画面一致。
+  Widget _mapPaint() {
+    final focus = _focus;
+    final detail = _detailFocus;
+    final regions = _displayedRegions(detail);
+    final painter = _painter = MapPainter(
+      regions: regions,
+      provinces: _provinces,
+      cityBoundaries: [
+        for (final province in _provinces)
+          if (province.bounds.overlaps(_view))
+            ...?_repository.cached(province.code),
+      ],
+      scale: _scale,
+      view: _view,
+      // 绿色填充只表示真实选择；未选城市时不高亮任何区域。
+      highlighted: {
+        if (focus != null && !_softFocus) ...[
+          ...focus.path,
+          for (final region in regions)
+            if (focus.includes(region.code, _repository.parentOf)) region.code,
+        ],
+      },
+      detailProvinces: detail == null ? null : {detail.provinceCode},
+      cities: _cities.cities,
+      showCities: _depth >= 1,
+      showDistricts: _depth >= 2,
+      fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+      origin: _origin,
+      destination: _destination,
+      parentOf: _repository.parentOf,
+    );
+    return CustomPaint(size: mapSize, painter: painter);
+  }
 
   Widget _mapArea({bool mobile = false}) => Column(
     children: [

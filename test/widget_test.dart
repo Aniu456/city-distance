@@ -5,7 +5,9 @@ import 'dart:ui' as ui;
 
 import 'package:china_map/animations/map_camera.dart';
 import 'package:china_map/main.dart';
+import 'package:china_map/models/city.dart';
 import 'package:china_map/theme/app_colors.dart';
+import 'package:china_map/utils/map_hit_test.dart';
 import 'package:china_map/utils/map_projection.dart';
 import 'package:china_map/widgets/city_details.dart';
 import 'package:china_map/widgets/map_painter.dart';
@@ -1092,6 +1094,174 @@ void main() {
       current.cityBoundaries.where((r) => r.code.startsWith('43')),
       isNotEmpty,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('拖动地图只重绘地图层：顶部字段和城市详情不重建', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    await selectCity(tester, '从哪里出发', '武汉');
+    await selectCity(tester, '想去哪里', '南昌');
+    expect(find.byType(CityDetails), findsOneWidget);
+    final watched = <String, int>{};
+    var mapBuilds = 0;
+    debugOnRebuildDirtyWidget = (element, builtOnce) {
+      final widget = element.widget;
+      final key = widget.key;
+      if (widget is CityDetails) {
+        watched.update('details', (n) => n + 1, ifAbsent: () => 1);
+      } else if (key == const ValueKey('origin-field') ||
+          key == const ValueKey('destination-field')) {
+        watched.update('$key', (n) => n + 1, ifAbsent: () => 1);
+      } else if (widget is ListenableBuilder &&
+          element.findAncestorWidgetOfExactType<InteractiveViewer>() != null) {
+        // 地图层由监听镜头的 ListenableBuilder 逐帧重建。
+        mapBuilds++;
+      }
+    };
+    final finder = find.byType(InteractiveViewer);
+    final before = painter(tester).view;
+    final gesture = await tester.startGesture(tester.getCenter(finder));
+    for (var i = 0; i < 30; i++) {
+      await gesture.moveBy(const Offset(4, 2));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    debugOnRebuildDirtyWidget = null;
+    await gesture.up();
+    await settleMap(tester);
+    expect(painter(tester).view, isNot(before));
+    expect(watched, isEmpty);
+    // 地图层仍逐帧更新。
+    expect(mapBuilds, greaterThanOrEqualTo(25));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('被碰撞隐藏的城市点不中，已显示的标签和标记可点中', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    await lookAt(tester, 118.8, 31.5, 190);
+    final current = painter(tester);
+    final shown = current.markers.map((city) => city.code).toSet();
+    final finder = find.byType(InteractiveViewer);
+    final controller = tester
+        .widget<InteractiveViewer>(finder)
+        .transformationController!;
+    final viewport = tester.getRect(finder).deflate(40);
+    Offset screen(City city) =>
+        tester.getTopLeft(finder) +
+        MatrixUtils.transformPoint(controller.value, city.point);
+    // 隐藏标记附近 12px 内、落在相邻城市区域里的点：旧逻辑会按最近标记选中
+    // 隐藏的城市，现在应按区域选中相邻城市（或什么都不选）。
+    final radius = 14 / current.scale;
+    ({City city, Offset point})? probe;
+    for (final city in current.cities) {
+      if (probe != null) {
+        break;
+      }
+      if (shown.contains(city.code) || !viewport.contains(screen(city))) {
+        continue;
+      }
+      for (var step = 0; step < 16 && probe == null; step++) {
+        final angle = step * math.pi / 8;
+        final point =
+            city.point +
+            Offset(math.cos(angle), math.sin(angle)) * (12 / current.scale);
+        final nearest = current.cities.reduce(
+          (a, b) =>
+              (a.point - point).distance <= (b.point - point).distance ? a : b,
+        );
+        if (nearest.code == city.code &&
+            current.cityAt(point, radius: radius) == null &&
+            regionAt(current.regions, point)?.code != city.code) {
+          probe = (city: city, point: point);
+        }
+      }
+    }
+    expect(probe, isNotNull);
+    await tester.tapAt(
+      tester.getTopLeft(finder) +
+          MatrixUtils.transformPoint(controller.value, probe!.point),
+    );
+    await settleMap(tester);
+    expect(fieldText(tester, 'destination-field'), isNot(probe.city.name));
+    // 已显示城市的标签文字也是点击目标（与绘制共用同一份布局）。
+    final byCode = {for (final city in current.markers) city.code: city};
+    final labels = current
+        .layoutLabels()
+        .where((l) => byCode.containsKey(l.code))
+        .toList();
+    expect(labels, isNotEmpty);
+    for (final label in labels) {
+      expect(
+        current.cityAt(label.bounds.center, radius: 0)?.code,
+        label.code,
+        reason: label.text,
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('不设区县的城市（东莞）显示无下级区县，而非加载失败', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    await tester.tap(find.text('从哪里出发'));
+    await tester.pumpAndSettle();
+    await tapPickerOption(tester, 'picker-provinces', 'picker-province-440000');
+    await tapPickerOption(tester, 'picker-cities', 'picker-city-441900');
+    expect(find.text('无下级区县'), findsOneWidget);
+    expect(find.textContaining('加载失败'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('全国数据加载失败后缩放，重试按钮仍在且可恢复', (tester) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await preloadAssets(tester);
+    const national = 'assets/maps/100000.json';
+    rootBundle.evict(national);
+    var failNational = true;
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMessageHandler('flutter/assets', (message) async {
+      final key = utf8.decode(message!.buffer.asUint8List());
+      if (failNational && key == national) {
+        return null;
+      }
+      final bytes = File(Uri.decodeFull(key)).readAsBytesSync();
+      return ByteData.sublistView(bytes);
+    });
+    addTearDown(() => messenger.setMockMessageHandler('flutter/assets', null));
+    await tester.pumpWidget(const ChinaMapApp());
+    await settleMap(tester);
+    expect(find.text('地图或城市资料加载失败，请重试'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.add).first);
+    await settleMap(tester);
+    expect(find.text('地图或城市资料加载失败，请重试'), findsOneWidget);
+    failNational = false;
+    await tester.tap(find.text('地图或城市资料加载失败，请重试'));
+    // 重试经由资源通道真实读取全国文件，先让真实 IO 完成。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await settleMap(tester);
+    expect(find.textContaining('加载失败'), findsNothing);
+    expect(painter(tester).provinces, isNotEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('选择器展开后旋转屏幕，高度按新布局换算，快速下滑不会直接最小化', (tester) async {
+    await start(tester, size: const Size(393, 852));
+    await tester.tap(find.text('从哪里出发'));
+    await tester.pumpAndSettle();
+    final lists = find.byKey(const ValueKey('city-picker-lists'));
+    final handle = find.byKey(const ValueKey('city-picker-handle'));
+    await tester.drag(handle, const Offset(0, -200));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(lists).height, closeTo(426, 1));
+    tester.view.physicalSize = const Size(852, 1000);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(lists).height, closeTo(500, 1));
+    await tester.fling(handle, const Offset(0, 120), 1200);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(lists).height, closeTo(220, 1));
     expect(tester.takeException(), isNull);
   });
 }
