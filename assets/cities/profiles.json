@@ -1,0 +1,206 @@
+[
+  {
+    "code": "110000",
+    "year": 2025,
+    "gdp": 52073.4,
+    "sectors": [
+      0.2,
+      13.8,
+      86.0
+    ],
+    "annualConsumption": 54122,
+    "consumptionScope": "城镇居民",
+    "industries": [
+      {
+        "name": "信息传输、软件和信息技术服务",
+        "percent": 23.41
+      },
+      {
+        "name": "金融业",
+        "percent": 16.65
+      }
+    ],
+    "sources": [
+      {
+        "title": "北京市2025年统计公报",
+        "url": "https://www.beijing.gov.cn/zhengce/zhengcefagui/202603/t20260325_4565678.html"
+      },
+      {
+        "title": "北京2025年经济运行情况",
+        "url": "https://www.beijing.gov.cn/gongkai/shuju/sjjd/202601/t20260121_4452114.html"
+      }
+    ]
+  },
+  {
+    "code": "310000",
+    "year": 2025,
+    "gdp": 56708.71,
+    "sectors": [
+      0.2,
+      20.5,
+      79.3
+    ],
+    "annualConsumption": 57076,
+    "consumptionScope": "城镇居民",
+    "industries": [
+      {
+        "name": "金融业",
+        "percent": 15.83
+      },
+      {
+        "name": "信息服务与先进制造",
+        "percent": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "上海2025年经济运行情况",
+        "url": "https://tjj.sh.gov.cn/tjxw/20260120/d3f4918a77484c77bed173db6aaef33c.html"
+      },
+      {
+        "title": "上海2025年居民收支",
+        "url": "https://www.shanghai.gov.cn/nw48810/20260203/2bed33e23b324e27ae846d3a88bade53.html"
+      },
+      {
+        "title": "上海2025年金融业数据",
+        "url": "https://jrj.sh.gov.cn/ZXYW178/20260331/7cd814fd488f4718b54c0b578ccc8be0.html"
+      }
+    ]
+  },
+  {
+    "code": "440100",
+    "year": 2025,
+    "gdp": 32039.46,
+    "sectors": [
+      0.99,
+      24.06,
+      74.95
+    ],
+    "annualConsumption": 51860,
+    "consumptionScope": "城镇居民",
+    "industries": [
+      {
+        "name": "批发和零售业",
+        "percent": 12.24
+      },
+      {
+        "name": "金融业",
+        "percent": 10.05
+      },
+      {
+        "name": "交通运输、仓储和邮政",
+        "percent": 6.31
+      }
+    ],
+    "sources": [
+      {
+        "title": "广州市2025年统计公报",
+        "url": "https://tjj.gz.gov.cn/zzfwzq/tjkx/content/post_10804061.html"
+      }
+    ]
+  },
+  {
+    "code": "440300",
+    "year": 2025,
+    "gdp": 38731.8,
+    "sectors": [
+      0.1,
+      37.4,
+      62.5
+    ],
+    "annualConsumption": 53548,
+    "consumptionScope": "全体居民",
+    "industries": [
+      {
+        "name": "高技术制造、装备制造",
+        "percent": null
+      },
+      {
+        "name": "信息服务、现代服务业",
+        "percent": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "深圳市2025年统计公报",
+        "url": "https://www.sz.gov.cn/cn/xxgk/zfxxgj/tjsj/tjgb/content/post_12805133.html"
+      },
+      {
+        "title": "深圳2025年经济运行情况",
+        "url": "https://www.sz.gov.cn/cn/xxgk/zfxxgj/tjsj/tjfx/content/post_12624917.html"
+      }
+    ]
+  },
+  {
+    "code": "330100",
+    "year": 2025,
+    "gdp": 23011,
+    "sectors": [
+      1.7,
+      24.5,
+      73.8
+    ],
+    "annualConsumption": 59484,
+    "consumptionScope": "城镇居民",
+    "industries": [
+      {
+        "name": "金融业",
+        "percent": 11.91
+      },
+      {
+        "name": "批发和零售业",
+        "percent": 7.17
+      },
+      {
+        "name": "交通运输、仓储和邮政",
+        "percent": 3.07
+      },
+      {
+        "name": "信息软件与数字经济",
+        "percent": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "杭州市2025年统计公报（杭州日报刊载）",
+        "url": "https://hzdaily.hangzhou.com.cn/hzrb/2026/04/30/article_detail_1_20260430A065.html"
+      }
+    ]
+  },
+  {
+    "code": "510100",
+    "year": 2025,
+    "gdp": 24763.6,
+    "sectors": [
+      2.2,
+      27.9,
+      69.9
+    ],
+    "annualConsumption": 37100,
+    "consumptionScope": "城镇居民",
+    "industries": [
+      {
+        "name": "金融业",
+        "percent": 9.71
+      },
+      {
+        "name": "批发和零售业",
+        "percent": 9.46
+      },
+      {
+        "name": "信息传输、软件和信息技术服务",
+        "percent": 8.63
+      }
+    ],
+    "sources": [
+      {
+        "title": "成都市2025年统计公报（成都日报刊载，新浪转载）",
+        "url": "https://finance.sina.com.cn/jjxw/2026-04-15/doc-inhupeis3814625.shtml"
+      },
+      {
+        "title": "成都2025年经济运行情况",
+        "url": "https://news.chengdu.cn/2026/0123/6972d9f555808711169d4361.shtml"
+      }
+    ]
+  }
+]

@@ -1,0 +1,257 @@
+{
+  "period": "2026-09",
+  "source": "中指研究院 · 50城住宅租赁价格指数",
+  "url": "https://www.cih-index.com/data/index/rentIndex.html",
+  "cities": [
+    {
+      "name": "三亚",
+      "average": 39.8,
+      "median": 33.64
+    },
+    {
+      "name": "上海",
+      "average": 84.82,
+      "median": 76.21
+    },
+    {
+      "name": "东莞",
+      "average": 26.19,
+      "median": 21.93
+    },
+    {
+      "name": "乌鲁木齐",
+      "average": 23.52,
+      "median": 22.71
+    },
+    {
+      "name": "佛山",
+      "average": 23.82,
+      "median": 19.24
+    },
+    {
+      "name": "兰州",
+      "average": 22.27,
+      "median": 21.47
+    },
+    {
+      "name": "北京",
+      "average": 81.48,
+      "median": 77.39
+    },
+    {
+      "name": "北海",
+      "average": 11.59,
+      "median": 10.41
+    },
+    {
+      "name": "南京",
+      "average": 35.68,
+      "median": 37.31
+    },
+    {
+      "name": "南宁",
+      "average": 21.71,
+      "median": 18.81
+    },
+    {
+      "name": "南昌",
+      "average": 20.41,
+      "median": 17.16
+    },
+    {
+      "name": "南通",
+      "average": 18.55,
+      "median": 17.04
+    },
+    {
+      "name": "厦门",
+      "average": 37.99,
+      "median": 36.24
+    },
+    {
+      "name": "合肥",
+      "average": 24.88,
+      "median": 23.18
+    },
+    {
+      "name": "呼和浩特",
+      "average": 18.21,
+      "median": 17.05
+    },
+    {
+      "name": "哈尔滨",
+      "average": 22.67,
+      "median": 21.25
+    },
+    {
+      "name": "嘉兴",
+      "average": 21.27,
+      "median": 19.59
+    },
+    {
+      "name": "大连",
+      "average": 28.97,
+      "median": 25.74
+    },
+    {
+      "name": "天津",
+      "average": 29.11,
+      "median": 26.6
+    },
+    {
+      "name": "太原",
+      "average": 17.95,
+      "median": 16.52
+    },
+    {
+      "name": "宁波",
+      "average": 30.68,
+      "median": 27.97
+    },
+    {
+      "name": "常州",
+      "average": 22.72,
+      "median": 20.35
+    },
+    {
+      "name": "广州",
+      "average": 47.46,
+      "median": 39.47
+    },
+    {
+      "name": "徐州",
+      "average": 16.08,
+      "median": 14.45
+    },
+    {
+      "name": "惠州",
+      "average": 18.35,
+      "median": 17.36
+    },
+    {
+      "name": "成都",
+      "average": 31.71,
+      "median": 27.71
+    },
+    {
+      "name": "无锡",
+      "average": 25.13,
+      "median": 23.1
+    },
+    {
+      "name": "昆明",
+      "average": 20.84,
+      "median": 20.39
+    },
+    {
+      "name": "杭州",
+      "average": 48.31,
+      "median": 46.19
+    },
+    {
+      "name": "武汉",
+      "average": 25.1,
+      "median": 21.92
+    },
+    {
+      "name": "沈阳",
+      "average": 22.43,
+      "median": 18.95
+    },
+    {
+      "name": "泉州",
+      "average": 22.03,
+      "median": 20.34
+    },
+    {
+      "name": "济南",
+      "average": 23.36,
+      "median": 21.51
+    },
+    {
+      "name": "海口",
+      "average": 25.66,
+      "median": 23
+    },
+    {
+      "name": "深圳",
+      "average": 83.12,
+      "median": 62.15
+    },
+    {
+      "name": "温州",
+      "average": 21.89,
+      "median": 21.36
+    },
+    {
+      "name": "珠海",
+      "average": 33.89,
+      "median": 27.7
+    },
+    {
+      "name": "石家庄",
+      "average": 19.59,
+      "median": 17.94
+    },
+    {
+      "name": "福州",
+      "average": 32.22,
+      "median": 28.72
+    },
+    {
+      "name": "绍兴",
+      "average": 19.13,
+      "median": 19.16
+    },
+    {
+      "name": "苏州",
+      "average": 34.1,
+      "median": 31.67
+    },
+    {
+      "name": "西宁",
+      "average": 22.11,
+      "median": 19.76
+    },
+    {
+      "name": "西安",
+      "average": 23.8,
+      "median": 20.55
+    },
+    {
+      "name": "贵阳",
+      "average": 19.82,
+      "median": 16.67
+    },
+    {
+      "name": "郑州",
+      "average": 20.22,
+      "median": 16.67
+    },
+    {
+      "name": "重庆",
+      "average": 23.39,
+      "median": 19.25
+    },
+    {
+      "name": "银川",
+      "average": 14.71,
+      "median": 12.46
+    },
+    {
+      "name": "长春",
+      "average": 21.27,
+      "median": 19.53
+    },
+    {
+      "name": "长沙",
+      "average": 24.46,
+      "median": 22.1
+    },
+    {
+      "name": "青岛",
+      "average": 25.45,
+      "median": 23.55
+    }
+  ]
+}
