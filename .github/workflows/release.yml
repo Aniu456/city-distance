@@ -35,6 +35,13 @@ jobs:
           [[ "$NUMBER" == "$PUB" ]] && NUMBER=1
           # build number 至少为 run number，保证每次发布递增
           if (( GITHUB_RUN_NUMBER > NUMBER )); then NUMBER=$GITHUB_RUN_NUMBER; fi
+          TAG="v$NAME"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            TAG=$GITHUB_REF_NAME
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::标签 $TAG 已存在，请先提升 pubspec 版本号"; exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
 
@@ -69,7 +76,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.ver.outputs.name) }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: 城向 v${{ steps.ver.outputs.name }}
           generate_release_notes: true
           files: chengxiang-v*.apk
